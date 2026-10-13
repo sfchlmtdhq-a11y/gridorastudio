@@ -1,0 +1,709 @@
+import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
+  Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock,
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical,
+} from "lucide-react";
+import { Logo } from "./Logo";
+import { getProject, saveProject, type Project } from "@/lib/projects";
+
+type Fab = typeof import("fabric");
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Obj = any;
+const PROPS = ["name", "selectable", "evented", "lockedLayer"];
+const FONTS = ["Manrope", "Syne", "Montserrat", "Poppins", "Oswald", "Bebas Neue", "Anton", "Playfair Display", "Roboto Slab", "Lobster", "Pacifico", "Dancing Script", "Permanent Marker", "Arial", "Georgia", "Courier New"];
+const STICKERS = ["😀", "😍", "🔥", "✨", "🎉", "❤️", "👍", "💯", "⭐", "🌟", "🎁", "🎂", "🌈", "☀️", "🌙", "⚡", "🍕", "☕", "🎵", "📸", "🚀", "💎", "👑", "🏆", "🌸", "🍀", "🦋", "🐱", "🎈", "💥", "✅", "📍"];
+const ICONS: Record<string, string> = {
+  Heart: "M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z",
+  Star: "M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z",
+  Bolt: "M13 2L3 14h8l-1 8 10-12h-8z",
+  Check: "M20 6L9 17l-5-5 1.5-1.5L9 14l9.5-9.5z",
+  Arrow: "M4 11h12.2l-5.6-5.6L12 4l8 8-8 8-1.4-1.4 5.6-5.6H4z",
+  Pin: "M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6a2.5 2.5 0 010 5.5z",
+  Chat: "M4 4h16a2 2 0 012 2v10a2 2 0 01-2 2H8l-5 4V6a2 2 0 011-2z",
+  Phone: "M6.6 10.8a15 15 0 006.6 6.6l2.2-2.2a1 1 0 011-.25 11 11 0 003.6.6 1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.25.2 2.45.6 3.6a1 1 0 01-.25 1z",
+  Mail: "M3 5h18v14H3zm2 2v.5l7 4.5 7-4.5V7l-7 4.5z",
+  Music: "M9 18V5l12-2v13a3 3 0 11-2-2.8V6.3l-8 1.4V18a3 3 0 11-2-2.8",
+  Home: "M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z",
+  Crown: "M2 7l5 4 5-7 5 7 5-4-2 12H4z",
+};
+type Tab = "props" | "layers" | "shapes" | "stickers" | "icons" | "bg";
+
+export function Editor({ id }: { id: string }) {
+  const nav = useNavigate();
+  const canvasEl = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const fc = useRef<Obj>(null);
+  const fab = useRef<Fab | null>(null);
+  const proj = useRef<Project | null>(null);
+  const hist = useRef({ stack: [] as string[], i: -1, lock: false });
+  const timers = useRef<{ snap?: number; save?: number }>({});
+  const [, force] = useReducer((x: number) => x + 1, 0);
+  const [ready, setReady] = useState(false);
+  const [missing, setMissing] = useState(false);
+  const [zoom, setZoomState] = useState(1);
+  const zoomRef = useRef(1);
+  const [tab, setTab] = useState<Tab>("bg");
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [hand, setHand] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [saved, setSaved] = useState(true);
+
+  const W = () => proj.current!.width;
+  const H = () => proj.current!.height;
+
+  const applyZoom = useCallback((z: number) => {
+    const c = fc.current;
+    if (!c) return;
+    z = Math.min(4, Math.max(0.05, z));
+    zoomRef.current = z;
+    c.setZoom(z);
+    c.setDimensions({ width: W() * z, height: H() * z });
+    setZoomState(z);
+  }, []);
+
+  const fit = useCallback(() => {
+    const el = wrapRef.current;
+    if (!el || !proj.current) return;
+    const z = Math.min((el.clientWidth - 48) / W(), (el.clientHeight - 48) / H());
+    applyZoom(z);
+  }, [applyZoom]);
+
+  const persist = useCallback(() => {
+    const c = fc.current, p = proj.current;
+    if (!c || !p) return;
+    const thumb = c.toDataURL({ format: "png", multiplier: 320 / Math.max(W(), H()) / zoomRef.current });
+    const bg = c.backgroundColor;
+    const next: Project = { ...p, background: typeof bg === "string" ? bg : p.background, json: c.toObject(PROPS), thumb, updatedAt: Date.now() };
+    proj.current = next;
+    if (!saveProject(next)) saveProject({ ...next, thumb: undefined });
+    setSaved(true);
+  }, []);
+
+  const scheduleSave = useCallback(() => {
+    setSaved(false);
+    clearTimeout(timers.current.save);
+    timers.current.save = window.setTimeout(persist, 800);
+  }, [persist]);
+
+  const snapshot = useCallback(() => {
+    const c = fc.current, h = hist.current;
+    if (!c || h.lock) return;
+    const s = JSON.stringify(c.toObject(PROPS));
+    if (h.stack[h.i] === s) return;
+    h.stack = h.stack.slice(0, h.i + 1);
+    h.stack.push(s);
+    if (h.stack.length > 60) h.stack.shift();
+    h.i = h.stack.length - 1;
+    force();
+  }, []);
+
+  const commit = useCallback(() => {
+    fc.current?.requestRenderAll();
+    force();
+    clearTimeout(timers.current.snap);
+    timers.current.snap = window.setTimeout(snapshot, 300);
+    scheduleSave();
+  }, [snapshot, scheduleSave]);
+
+  const restore = useCallback(async (s: string) => {
+    const c = fc.current, h = hist.current;
+    h.lock = true;
+    await c.loadFromJSON(JSON.parse(s));
+    c.requestRenderAll();
+    h.lock = false;
+    force();
+    scheduleSave();
+  }, [scheduleSave]);
+
+  const undo = useCallback(() => {
+    const h = hist.current;
+    if (h.i > 0) { h.i--; restore(h.stack[h.i]); }
+  }, [restore]);
+  const redo = useCallback(() => {
+    const h = hist.current;
+    if (h.i < h.stack.length - 1) { h.i++; restore(h.stack[h.i]); }
+  }, [restore]);
+
+  // init
+  useEffect(() => {
+    const p = getProject(id);
+    if (!p) { setMissing(true); return; }
+    proj.current = p;
+    let disposed = false;
+    (async () => {
+      const f = await import("fabric");
+      if (disposed || !canvasEl.current) return;
+      fab.current = f;
+      const c = new f.Canvas(canvasEl.current, { preserveObjectStacking: true, backgroundColor: p.background, width: p.width, height: p.height });
+      fc.current = c;
+      if (p.json) {
+        hist.current.lock = true;
+        await c.loadFromJSON(p.json as object);
+        hist.current.lock = false;
+      }
+      c.requestRenderAll();
+      const onChange = () => { if (!hist.current.lock) { snapshot(); scheduleSave(); } force(); };
+      c.on("object:modified", onChange);
+      c.on("object:added", onChange);
+      c.on("object:removed", onChange);
+      c.on("text:changed", onChange);
+      const onSel = () => { force(); if (c.getActiveObject()) setTab("props"); };
+      c.on("selection:created", onSel);
+      c.on("selection:updated", onSel);
+      c.on("selection:cleared", () => force());
+      setReady(true);
+      requestAnimationFrame(() => { fit(); snapshot(); });
+      document.fonts?.ready.then(() => c.requestRenderAll());
+    })();
+    return () => {
+      disposed = true;
+      clearTimeout(timers.current.save);
+      if (fc.current) { persist(); fc.current.dispose(); fc.current = null; }
+    };
+  }, [id, fit, snapshot, scheduleSave, persist]);
+
+  const active = (): Obj => fc.current?.getActiveObject() ?? null;
+
+  const add = (o: Obj) => {
+    const c = fc.current;
+    o.set({ left: W() / 2, top: H() / 2, originX: "center", originY: "center" });
+    o.setCoords();
+    c.add(o);
+    c.setActiveObject(o);
+    c.requestRenderAll();
+    setTab("props");
+  };
+
+  const addText = () => {
+    const f = fab.current!;
+    add(new f.Textbox("Double-click to edit", { width: W() * 0.6, fontSize: Math.round(Math.min(W(), H()) / 12), fontFamily: "Manrope", fill: "#111111", textAlign: "center", name: "Text" }));
+    setPanelOpen(true);
+  };
+
+  const addShape = (kind: string) => {
+    const f = fab.current!;
+    const s = Math.min(W(), H()) * 0.3;
+    const fill = "#c6f432";
+    let o: Obj;
+    if (kind === "rect") o = new f.Rect({ width: s, height: s, fill, name: "Rectangle" });
+    else if (kind === "rounded") o = new f.Rect({ width: s, height: s * 0.7, rx: s * 0.12, ry: s * 0.12, fill, name: "Rounded rect" });
+    else if (kind === "circle") o = new f.Circle({ radius: s / 2, fill, name: "Circle" });
+    else if (kind === "ellipse") o = new f.Ellipse({ rx: s / 2, ry: s / 3, fill, name: "Ellipse" });
+    else if (kind === "triangle") o = new f.Triangle({ width: s, height: s, fill, name: "Triangle" });
+    else if (kind === "line") o = new f.Line([0, 0, s * 1.5, 0], { stroke: "#111111", strokeWidth: Math.max(4, s / 25), name: "Line" });
+    else {
+      const pts = [];
+      const n = kind === "star" ? 10 : kind === "hexagon" ? 6 : 5;
+      for (let i = 0; i < n; i++) {
+        const a = (Math.PI * 2 * i) / n - Math.PI / 2;
+        const r = kind === "star" && i % 2 ? s / 4.5 : s / 2;
+        pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
+      }
+      o = new f.Polygon(pts, { fill, name: kind[0].toUpperCase() + kind.slice(1) });
+    }
+    add(o);
+  };
+
+  const addSticker = (e: string) => {
+    const f = fab.current!;
+    add(new f.FabricText(e, { fontSize: Math.min(W(), H()) / 5, name: "Sticker " + e }));
+  };
+  const addIcon = (n: string) => {
+    const f = fab.current!;
+    const o = new f.Path(ICONS[n], { fill: "#111111", name: "Icon " + n });
+    o.scaleToWidth(Math.min(W(), H()) * 0.2);
+    add(o);
+  };
+
+  const onFile = (file?: File) => {
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = async () => {
+      const f = fab.current!;
+      const img = await f.FabricImage.fromURL(r.result as string);
+      img.set({ name: "Image" });
+      const max = Math.min(W(), H()) * 0.8;
+      if (img.width > max || img.height > max) img.scale(max / Math.max(img.width, img.height));
+      add(img);
+    };
+    r.readAsDataURL(file);
+  };
+
+  const del = () => {
+    const c = fc.current;
+    const objs = c.getActiveObjects();
+    if (!objs.length) return;
+    c.discardActiveObject();
+    c.remove(...objs);
+    c.requestRenderAll();
+  };
+  const dup = async () => {
+    const c = fc.current, o = active();
+    if (!o) return;
+    const cl = await o.clone(PROPS);
+    cl.set({ left: o.left + 30, top: o.top + 30 });
+    if (cl.type === "activeselection" || cl.type === "activeSelection") {
+      cl.canvas = c;
+      cl.forEachObject((x: Obj) => c.add(x));
+      cl.setCoords();
+    } else c.add(cl);
+    c.setActiveObject(cl);
+    c.requestRenderAll();
+  };
+  const order = (k: "up" | "down" | "top" | "bottom") => {
+    const c = fc.current, o = active();
+    if (!o) return;
+    if (k === "up") c.bringObjectForward(o);
+    if (k === "down") c.sendObjectBackwards(o);
+    if (k === "top") c.bringObjectToFront(o);
+    if (k === "bottom") c.sendObjectToBack(o);
+    c.fire("object:modified", { target: o });
+    commit();
+  };
+  const toggleLock = (o: Obj) => {
+    const l = !o.lockedLayer;
+    o.set({ lockedLayer: l, selectable: !l, evented: !l });
+    if (l && fc.current.getActiveObject() === o) fc.current.discardActiveObject();
+    commit();
+  };
+  const toggleVis = (o: Obj) => {
+    o.set({ visible: !o.visible });
+    if (!o.visible && fc.current.getActiveObject() === o) fc.current.discardActiveObject();
+    commit();
+  };
+
+  // keyboard
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
+      if (active()?.isEditing) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      else if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
+      else if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); dup(); }
+      else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); del(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // pan (hand tool) + ctrl-wheel zoom
+  const drag = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
+  const onWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) applyZoom(zoomRef.current * (e.deltaY < 0 ? 1.1 : 0.9));
+  };
+
+  // export
+  const exportAs = async (kind: "png" | "tpng" | "jpg" | "pdf") => {
+    const c = fc.current;
+    setExportOpen(false);
+    c.discardActiveObject();
+    const prev = c.backgroundColor;
+    if (kind === "tpng") c.backgroundColor = "";
+    else if (!prev) c.backgroundColor = kind === "png" ? "" : "#ffffff";
+    c.renderAll();
+    const fmt = kind === "jpg" ? "jpeg" : "png";
+    const url = c.toDataURL({ format: fmt, quality: 0.95, multiplier: 1 / zoomRef.current });
+    c.backgroundColor = prev;
+    c.renderAll();
+    const name = (proj.current!.name || "design").replace(/[^\w-]+/g, "_");
+    if (kind === "pdf") {
+      const { jsPDF } = await import("jspdf");
+      const pdf = new jsPDF({ orientation: W() > H() ? "l" : "p", unit: "px", format: [W(), H()], hotfixes: ["px_scaling"] });
+      pdf.addImage(url, "PNG", 0, 0, W(), H());
+      pdf.save(name + ".pdf");
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}${kind === "tpng" ? "_transparent" : ""}.${kind === "jpg" ? "jpg" : "png"}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  if (missing)
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4">
+        <p className="text-muted-foreground">This design could not be found.</p>
+        <button className="rounded-lg bg-primary px-4 py-2 text-primary-foreground" onClick={() => nav({ to: "/" })}>Back to dashboard</button>
+      </div>
+    );
+
+  const o = ready ? active() : null;
+  const h = hist.current;
+  const objects: Obj[] = ready && fc.current ? [...fc.current.getObjects()].reverse() : [];
+  const openTab = (t: Tab) => { setTab(t); setPanelOpen(true); };
+
+  const tools: { icon: ReactNode; label: string; on: () => void }[] = [
+    { icon: <Type />, label: "Text", on: addText },
+    { icon: <ImagePlus />, label: "Image", on: () => fileRef.current?.click() },
+    { icon: <Shapes />, label: "Shapes", on: () => openTab("shapes") },
+    { icon: <Smile />, label: "Stickers", on: () => openTab("stickers") },
+    { icon: <Star />, label: "Icons", on: () => openTab("icons") },
+    { icon: <PaintBucket />, label: "Canvas", on: () => { fc.current?.discardActiveObject(); fc.current?.requestRenderAll(); openTab("bg"); } },
+    { icon: <Layers />, label: "Layers", on: () => openTab("layers") },
+  ];
+
+  return (
+    <div className="flex h-[100dvh] flex-col overflow-hidden">
+      {/* top bar */}
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-card px-2 sm:px-4">
+        <Logo compact />
+        <input
+          className="min-w-0 max-w-[40vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs"
+          defaultValue={proj.current?.name}
+          key={ready ? "r" : "n"}
+          onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }}
+        />
+        <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
+        <div className="ml-auto flex items-center gap-1">
+          <IconBtn label="Undo" disabled={h.i <= 0} onClick={undo}><Undo2 /></IconBtn>
+          <IconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></IconBtn>
+          <div className="relative">
+            <button onClick={() => setExportOpen((v) => !v)} className="ml-1 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">
+              <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 top-11 z-50 w-52 rounded-xl border border-border bg-popover p-1 shadow-xl">
+                {([["png", "PNG"], ["tpng", "Transparent PNG"], ["jpg", "JPG"], ["pdf", "PDF"]] as const).map(([k, l]) => (
+                  <button key={k} onClick={() => exportAs(k)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">{l}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        {/* tool rail desktop */}
+        <nav className="hidden w-20 shrink-0 flex-col gap-1 border-r border-border bg-card p-2 md:flex">
+          {tools.map((t) => (
+            <button key={t.label} onClick={t.on} className="flex flex-col items-center gap-1 rounded-lg py-2 text-[11px] text-muted-foreground transition hover:bg-muted hover:text-foreground [&_svg]:h-5 [&_svg]:w-5">
+              {t.icon}{t.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* canvas area */}
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <div
+            ref={wrapRef}
+            onWheel={onWheel}
+            onPointerDown={(e) => { if (hand) { drag.current = { x: e.clientX, y: e.clientY, sl: wrapRef.current!.scrollLeft, st: wrapRef.current!.scrollTop }; } }}
+            onPointerMove={(e) => { const d = drag.current; if (d && wrapRef.current) { wrapRef.current.scrollLeft = d.sl - (e.clientX - d.x); wrapRef.current.scrollTop = d.st - (e.clientY - d.y); } }}
+            onPointerUp={() => (drag.current = null)}
+            onPointerLeave={() => (drag.current = null)}
+            className={`workspace absolute inset-0 overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+          >
+            <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
+              <div className={`checker shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
+                <canvas ref={canvasEl} />
+              </div>
+            </div>
+          </div>
+          {/* zoom controls */}
+          <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card/95 px-2 py-1 shadow-lg backdrop-blur">
+            <IconBtn label="Zoom out" onClick={() => applyZoom(zoom / 1.2)}><ZoomOut /></IconBtn>
+            <span className="w-12 text-center text-xs tabular-nums">{Math.round(zoom * 100)}%</span>
+            <IconBtn label="Zoom in" onClick={() => applyZoom(zoom * 1.2)}><ZoomIn /></IconBtn>
+            <IconBtn label="Fit to screen" onClick={fit}><Maximize /></IconBtn>
+            <IconBtn label="Pan" active={hand} onClick={() => setHand((v) => !v)}><Hand /></IconBtn>
+            {o && <IconBtn label="Edit properties" className="md:hidden" onClick={() => openTab("props")}><SlidersHorizontal /></IconBtn>}
+          </div>
+        </div>
+
+        {/* side panel */}
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-16 z-40 max-h-[55vh] flex-col rounded-t-2xl border-t border-border bg-card shadow-2xl md:static md:z-auto md:flex md:max-h-none md:w-80 md:shrink-0 md:rounded-none md:border-l md:border-t-0 md:shadow-none`}>
+          <div className="flex items-center gap-1 border-b border-border p-2">
+            {(["props", "layers", "bg"] as Tab[]).map((t) => (
+              <button key={t} onClick={() => setTab(t)} className={`rounded-md px-3 py-1.5 text-xs font-medium ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
+                {t === "props" ? "Properties" : t === "layers" ? "Layers" : "Canvas"}
+              </button>
+            ))}
+            <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {ready && tab === "props" && (o ? <Properties o={o} f={fab.current!} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
+            {ready && tab === "layers" && (
+              <div className="space-y-1">
+                {objects.length === 0 && <p className="text-sm text-muted-foreground">No layers yet. Add text, images or shapes.</p>}
+                {objects.map((x, i) => (
+                  <div key={i} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-sm ${o === x ? "border-primary bg-primary/10" : "border-border"}`}>
+                    <button className="min-w-0 flex-1 truncate text-left" onClick={() => { if (!x.lockedLayer && x.visible) { fc.current.setActiveObject(x); fc.current.requestRenderAll(); force(); } }}>
+                      {x.name || x.type}{x.text ? `: ${x.text.slice(0, 18)}` : ""}
+                    </button>
+                    <IconBtn label={x.visible ? "Hide" : "Show"} onClick={() => toggleVis(x)}>{x.visible ? <Eye /> : <EyeOff />}</IconBtn>
+                    <IconBtn label={x.lockedLayer ? "Unlock" : "Lock"} onClick={() => toggleLock(x)}>{x.lockedLayer ? <Lock /> : <Unlock />}</IconBtn>
+                  </div>
+                ))}
+                {o && (
+                  <div className="grid grid-cols-4 gap-1 pt-3">
+                    <IconBtn label="Bring to front" onClick={() => order("top")}><ChevronsUp /></IconBtn>
+                    <IconBtn label="Bring forward" onClick={() => order("up")}><ArrowUp /></IconBtn>
+                    <IconBtn label="Send backward" onClick={() => order("down")}><ArrowDown /></IconBtn>
+                    <IconBtn label="Send to back" onClick={() => order("bottom")}><ChevronsDown /></IconBtn>
+                  </div>
+                )}
+              </div>
+            )}
+            {ready && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current!} proj={proj.current!} commit={commit} resize={(w, hh) => { proj.current = { ...proj.current!, width: w, height: hh }; fit(); commit(); }} />}
+            {ready && tab === "shapes" && (
+              <Grid>
+                {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line"].map((k) => (
+                  <Tile key={k} onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>
+                ))}
+              </Grid>
+            )}
+            {ready && tab === "stickers" && (
+              <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid>
+            )}
+            {ready && tab === "icons" && (
+              <Grid>{Object.keys(ICONS).map((n) => (
+                <Tile key={n} onClick={() => addIcon(n)}>
+                  <svg viewBox="0 0 24 24" className="h-7 w-7 fill-current"><path d={ICONS[n]} /></svg>
+                  <span className="text-[10px]">{n}</span>
+                </Tile>
+              ))}</Grid>
+            )}
+          </div>
+        </aside>
+
+        {/* tool rail mobile */}
+        <nav className="flex h-16 shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-card px-2 md:hidden">
+          {tools.map((t) => (
+            <button key={t.label} onClick={t.on} className="flex min-w-[56px] flex-col items-center gap-0.5 rounded-lg py-1.5 text-[10px] text-muted-foreground [&_svg]:h-5 [&_svg]:w-5">
+              {t.icon}{t.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
+    </div>
+  );
+}
+
+/* ---------- UI bits ---------- */
+function IconBtn({ children, label, onClick, disabled, active, className = "" }: { children: ReactNode; label: string; onClick: () => void; disabled?: boolean; active?: boolean; className?: string }) {
+  return (
+    <button title={label} aria-label={label} disabled={disabled} onClick={onClick}
+      className={`inline-flex items-center justify-center rounded-md p-1.5 transition hover:bg-muted disabled:opacity-30 [&_svg]:h-4 [&_svg]:w-4 ${active ? "bg-primary text-primary-foreground hover:bg-primary" : ""} ${className}`}>
+      {children}
+    </button>
+  );
+}
+const Grid = ({ children }: { children: ReactNode }) => <div className="grid grid-cols-4 gap-2">{children}</div>;
+const Tile = ({ children, onClick }: { children: ReactNode; onClick: () => void }) => (
+  <button onClick={onClick} className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border border-border hover:border-primary hover:bg-muted">{children}</button>
+);
+function ShapeIcon({ k }: { k: string }) {
+  const c = "h-7 w-7 fill-primary";
+  if (k === "rect") return <svg viewBox="0 0 24 24" className={c}><rect x="3" y="3" width="18" height="18" /></svg>;
+  if (k === "rounded") return <svg viewBox="0 0 24 24" className={c}><rect x="2" y="6" width="20" height="13" rx="3" /></svg>;
+  if (k === "circle") return <svg viewBox="0 0 24 24" className={c}><circle cx="12" cy="12" r="9" /></svg>;
+  if (k === "ellipse") return <svg viewBox="0 0 24 24" className={c}><ellipse cx="12" cy="12" rx="10" ry="6" /></svg>;
+  if (k === "triangle") return <svg viewBox="0 0 24 24" className={c}><path d="M12 3l10 18H2z" /></svg>;
+  if (k === "pentagon") return <svg viewBox="0 0 24 24" className={c}><path d="M12 2l10 7-4 12H6L2 9z" /></svg>;
+  if (k === "hexagon") return <svg viewBox="0 0 24 24" className={c}><path d="M12 2l9 5v10l-9 5-9-5V7z" /></svg>;
+  if (k === "star") return <svg viewBox="0 0 24 24" className={c}><path d={ICONS.Star} /></svg>;
+  return <svg viewBox="0 0 24 24" className="h-7 w-7 stroke-primary" strokeWidth="3"><path d="M2 12h20" /></svg>;
+}
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="mb-5">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+function Slider({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void }) {
+  return (
+    <label className="block text-xs">
+      <div className="mb-1 flex justify-between text-muted-foreground"><span>{label}</span><span className="tabular-nums">{Math.round(value * 100) / 100}</span></div>
+      <input type="range" className="w-full accent-[var(--primary)]" min={min} max={max} step={step} value={value} onChange={(e) => onChange(+e.target.value)} />
+    </label>
+  );
+}
+function Color({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="flex items-center justify-between text-xs text-muted-foreground">
+      {label}
+      <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="h-8 w-12 cursor-pointer rounded border border-border bg-transparent" />
+    </label>
+  );
+}
+const toHex = (v: unknown, d = "#000000") => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v : d);
+
+function makeGradient(f: Fab, a: string, b: string, angle: number, w = 1, h = 1, units: "percentage" | "pixels" = "percentage") {
+  const r = (angle * Math.PI) / 180;
+  const cx = w / 2, cy = h / 2, dx = (Math.cos(r) * w) / 2, dy = (Math.sin(r) * h) / 2;
+  return new f.Gradient({ type: "linear", gradientUnits: units, coords: { x1: cx - dx, y1: cy - dy, x2: cx + dx, y2: cy + dy }, colorStops: [{ offset: 0, color: a }, { offset: 1, color: b }] });
+}
+
+/* ---------- Properties ---------- */
+function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => void; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
+  const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
+  const isText = o instanceof f.IText || o instanceof f.Textbox || o instanceof f.FabricText;
+  const isImg = o instanceof f.FabricImage;
+  const isLine = o instanceof f.Line;
+  const gradFill = o.fill && typeof o.fill === "object";
+  const stops = gradFill ? o.fill.colorStops : null;
+  const [g, setG] = useState({ a: stops?.[0]?.color ?? "#ff4d6d", b: stops?.[1]?.color ?? "#ffb703", angle: 0 });
+  const sh = o.shadow;
+  const shadowSet = (p: Partial<{ color: string; blur: number; offsetX: number; offsetY: number }>) => {
+    const cur = { color: sh?.color ?? "#000000", blur: sh?.blur ?? 10, offsetX: sh?.offsetX ?? 5, offsetY: sh?.offsetY ?? 5 };
+    set({ shadow: new f.Shadow({ ...cur, ...p }) });
+  };
+
+  return (
+    <div>
+      <div className="mb-5 grid grid-cols-6 gap-1">
+        <IconBtn label="Duplicate" onClick={actions.dup}><Copy /></IconBtn>
+        <IconBtn label="Bring forward" onClick={() => actions.order("up")}><ArrowUp /></IconBtn>
+        <IconBtn label="Send backward" onClick={() => actions.order("down")}><ArrowDown /></IconBtn>
+        <IconBtn label="Flip horizontal" onClick={() => set({ flipX: !o.flipX })}><FlipHorizontal /></IconBtn>
+        <IconBtn label="Lock" onClick={() => actions.toggleLock(o)}><Lock /></IconBtn>
+        <IconBtn label="Delete" className="text-destructive" onClick={actions.del}><Trash2 /></IconBtn>
+      </div>
+
+      {isText && (
+        <Section title="Text">
+          {o instanceof f.Textbox && (
+            <textarea className="field min-h-[60px]" value={o.text} onChange={(e) => set({ text: e.target.value })} />
+          )}
+          <select className="field" value={o.fontFamily} style={{ fontFamily: o.fontFamily }}
+            onChange={(e) => { const v = e.target.value; set({ fontFamily: v }); document.fonts?.load(`40px "${v}"`).then(() => { o.set({ fontFamily: v }); o.initDimensions?.(); commit(); }); }}>
+            {FONTS.map((x) => <option key={x} value={x} style={{ fontFamily: x }}>{x}</option>)}
+          </select>
+          <Slider label="Font size" value={o.fontSize} min={6} max={600} onChange={(v) => set({ fontSize: v })} />
+          <div className="flex gap-1">
+            <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
+            <IconBtn label="Italic" active={o.fontStyle === "italic"} onClick={() => set({ fontStyle: o.fontStyle === "italic" ? "normal" : "italic" })}><Italic /></IconBtn>
+            <span className="mx-1 w-px bg-border" />
+            <IconBtn label="Align left" active={o.textAlign === "left"} onClick={() => set({ textAlign: "left" })}><AlignLeft /></IconBtn>
+            <IconBtn label="Align center" active={o.textAlign === "center"} onClick={() => set({ textAlign: "center" })}><AlignCenter /></IconBtn>
+            <IconBtn label="Align right" active={o.textAlign === "right"} onClick={() => set({ textAlign: "right" })}><AlignRight /></IconBtn>
+          </div>
+          <Slider label="Letter spacing" value={o.charSpacing ?? 0} min={-200} max={1000} onChange={(v) => set({ charSpacing: v })} />
+          <Slider label="Line height" value={o.lineHeight ?? 1.16} min={0.5} max={3} step={0.05} onChange={(v) => set({ lineHeight: v })} />
+        </Section>
+      )}
+
+      {!isImg && (
+        <Section title={isLine ? "Line color" : "Fill"}>
+          {!isLine && (
+            <div className="flex gap-1 text-xs">
+              <button className={`flex-1 rounded-md py-1.5 ${!gradFill ? "bg-muted" : "text-muted-foreground"}`} onClick={() => set({ fill: g.a })}>Solid</button>
+              <button className={`flex-1 rounded-md py-1.5 ${gradFill ? "bg-muted" : "text-muted-foreground"}`} onClick={() => set({ fill: makeGradient(f, g.a, g.b, g.angle) })}>Gradient</button>
+            </div>
+          )}
+          {isLine ? (
+            <Color label="Color" value={toHex(o.stroke)} onChange={(v) => set({ stroke: v })} />
+          ) : gradFill ? (
+            <>
+              <Color label="Start" value={toHex(g.a)} onChange={(v) => { const n = { ...g, a: v }; setG(n); set({ fill: makeGradient(f, n.a, n.b, n.angle) }); }} />
+              <Color label="End" value={toHex(g.b)} onChange={(v) => { const n = { ...g, b: v }; setG(n); set({ fill: makeGradient(f, n.a, n.b, n.angle) }); }} />
+              <Slider label="Angle" value={g.angle} min={0} max={360} onChange={(v) => { const n = { ...g, angle: v }; setG(n); set({ fill: makeGradient(f, n.a, n.b, n.angle) }); }} />
+            </>
+          ) : (
+            <Color label="Color" value={toHex(o.fill)} onChange={(v) => set({ fill: v })} />
+          )}
+        </Section>
+      )}
+
+      {isImg && <ImageCrop o={o} set={set} />}
+
+      <Section title={isLine ? "Thickness" : "Outline"}>
+        {!isLine && <Color label="Outline color" value={toHex(o.stroke, "#000000")} onChange={(v) => set({ stroke: v, strokeWidth: o.strokeWidth || 2 })} />}
+        <Slider label="Width" value={o.strokeWidth ?? 0} min={0} max={isLine ? 100 : 40} onChange={(v) => set({ strokeWidth: v, stroke: o.stroke || "#000000", paintFirst: isText ? "stroke" : "fill" })} />
+      </Section>
+
+      <Section title="Shadow">
+        <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={!!sh} onChange={(e) => (e.target.checked ? shadowSet({}) : set({ shadow: null }))} /> Enable shadow
+        </label>
+        {sh && (
+          <>
+            <Color label="Color" value={toHex(sh.color)} onChange={(v) => shadowSet({ color: v })} />
+            <Slider label="Blur" value={sh.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} />
+            <Slider label="Offset X" value={sh.offsetX} min={-100} max={100} onChange={(v) => shadowSet({ offsetX: v })} />
+            <Slider label="Offset Y" value={sh.offsetY} min={-100} max={100} onChange={(v) => shadowSet({ offsetY: v })} />
+          </>
+        )}
+      </Section>
+
+      <Section title="Transform">
+        <Slider label="Rotation" value={Math.round(o.angle ?? 0)} min={-180} max={180} onChange={(v) => { o.rotate(v); commit(); }} />
+        <Slider label="Scale" value={o.scaleX ?? 1} min={0.05} max={5} step={0.01} onChange={(v) => set({ scaleX: v, scaleY: v * ((o.scaleY ?? 1) / (o.scaleX || 1)) })} />
+        <Slider label="Opacity" value={o.opacity ?? 1} min={0} max={1} step={0.01} onChange={(v) => set({ opacity: v })} />
+        <div className="flex gap-1">
+          <IconBtn label="Flip horizontal" onClick={() => set({ flipX: !o.flipX })}><FlipHorizontal /></IconBtn>
+          <IconBtn label="Flip vertical" onClick={() => set({ flipY: !o.flipY })}><FlipVertical /></IconBtn>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function ImageCrop({ o, set }: { o: Obj; set: (p: Record<string, unknown>) => void }) {
+  const el = o.getElement();
+  const ow = el.naturalWidth || el.width, oh = el.naturalHeight || el.height;
+  const l = o.cropX || 0, t = o.cropY || 0;
+  const r = Math.max(0, ow - l - o.width), b = Math.max(0, oh - t - o.height);
+  const apply = (nl: number, nt: number, nr: number, nb: number) => {
+    const w = Math.max(10, ow - nl - nr), h = Math.max(10, oh - nt - nb);
+    set({ cropX: Math.min(nl, ow - 10), cropY: Math.min(nt, oh - 10), width: w, height: h });
+  };
+  return (
+    <Section title="Crop image">
+      <Slider label="Left" value={l} min={0} max={ow - 10} onChange={(v) => apply(v, t, Math.min(r, ow - v - 10), b)} />
+      <Slider label="Right" value={r} min={0} max={ow - 10} onChange={(v) => apply(Math.min(l, ow - v - 10), t, v, b)} />
+      <Slider label="Top" value={t} min={0} max={oh - 10} onChange={(v) => apply(l, v, r, Math.min(b, oh - v - 10))} />
+      <Slider label="Bottom" value={b} min={0} max={oh - 10} onChange={(v) => apply(l, Math.min(t, oh - v - 10), r, v)} />
+      <button className="w-full rounded-md border border-border py-1.5 text-xs hover:bg-muted" onClick={() => apply(0, 0, 0, 0)}>Reset crop</button>
+    </Section>
+  );
+}
+
+/* ---------- Canvas panel ---------- */
+function CanvasPanel({ c, f, proj, commit, resize }: { c: Obj; f: Fab; proj: Project; commit: () => void; resize: (w: number, h: number) => void }) {
+  const bg = c.backgroundColor;
+  const mode = !bg ? "none" : typeof bg === "string" ? "solid" : "gradient";
+  const [g, setG] = useState({ a: "#0f172a", b: "#c6f432", angle: 45 });
+  const [w, setW] = useState(proj.width);
+  const [h, setH] = useState(proj.height);
+  const grad = (n: typeof g) => { setG(n); c.backgroundColor = makeGradient(f, n.a, n.b, n.angle, proj.width, proj.height, "pixels"); commit(); };
+  return (
+    <div>
+      <Section title="Background">
+        <div className="flex gap-1 text-xs">
+          {(["solid", "gradient", "none"] as const).map((m) => (
+            <button key={m} className={`flex-1 rounded-md py-1.5 capitalize ${mode === m ? "bg-muted" : "text-muted-foreground"}`}
+              onClick={() => { if (m === "solid") c.backgroundColor = "#ffffff"; else if (m === "none") c.backgroundColor = ""; else return grad(g); commit(); }}>
+              {m === "none" ? "Transparent" : m}
+            </button>
+          ))}
+        </div>
+        {mode === "solid" && <Color label="Color" value={toHex(bg, "#ffffff")} onChange={(v) => { c.backgroundColor = v; commit(); }} />}
+        {mode === "gradient" && (
+          <>
+            <Color label="Start" value={g.a} onChange={(v) => grad({ ...g, a: v })} />
+            <Color label="End" value={g.b} onChange={(v) => grad({ ...g, b: v })} />
+            <Slider label="Angle" value={g.angle} min={0} max={360} onChange={(v) => grad({ ...g, angle: v })} />
+          </>
+        )}
+      </Section>
+      <Section title="Canvas size">
+        <div className="grid grid-cols-2 gap-2">
+          <input type="number" className="field" value={w} onChange={(e) => setW(+e.target.value)} aria-label="Width" />
+          <input type="number" className="field" value={h} onChange={(e) => setH(+e.target.value)} aria-label="Height" />
+        </div>
+        <button className="w-full rounded-md bg-secondary py-2 text-xs font-medium hover:opacity-90" onClick={() => resize(Math.min(5000, Math.max(50, w)), Math.min(5000, Math.max(50, h)))}>Apply size</button>
+      </Section>
+    </div>
+  );
+}

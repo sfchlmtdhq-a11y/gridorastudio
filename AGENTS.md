@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Designs are stored in browser localStorage via src/lib/projects.ts (no backend requested); editor uses fabric v6 loaded via dynamic import to stay SSR-safe.
+- No templates anywhere in the app: user requirement for a pure blank-canvas workflow.
