@@ -450,7 +450,7 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 max-h-[55vh] flex-col rounded-t-lg border-t border-border bg-card shadow-2xl md:static md:z-auto md:flex md:max-h-none md:w-80 md:shrink-0 md:rounded-none md:border-l md:border-t-0 md:shadow-none`}>
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 max-h-[42vh] flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:max-h-[34vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
           <div className="flex items-center gap-1 border-b border-border p-2">
             {(["props", "layers", "bg", "edit"] as Tab[]).map((t) => (
               <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
@@ -459,7 +459,7 @@ export function Editor({ id }: { id: string }) {
             ))}
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 md:flex md:items-start md:gap-6 md:overflow-x-auto md:overflow-y-hidden">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
@@ -556,7 +556,7 @@ function ShapeIcon({ k }: { k: string }) {
 }
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="mb-5">
+    <div className="mb-5 md:mb-0 md:min-w-[220px]">
       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
       <div className="space-y-2">{children}</div>
     </div>
@@ -587,6 +587,16 @@ function Color({ label, value, onChange }: { label: string; value: string; onCha
   );
 }
 const toHex = (v: unknown, d = "#000000") => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v : d);
+const alphaOf = (v: unknown) => {
+  if (typeof v !== "string") return 1;
+  const match = v.match(/^rgba?\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)$/i);
+  return match ? Number(match[1]) : 1;
+};
+const withAlpha = (v: unknown, alpha: number) => {
+  const hex = toHex(v);
+  const n = hex.slice(1);
+  return `rgba(${parseInt(n.slice(0, 2), 16)},${parseInt(n.slice(2, 4), 16)},${parseInt(n.slice(4, 6), 16)},${alpha})`;
+};
 
 function makeGradient(f: Fab, a: string, b: string, angle: number, w = 1, h = 1, units: "percentage" | "pixels" = "percentage") {
   const r = (angle * Math.PI) / 180;
@@ -595,10 +605,55 @@ function makeGradient(f: Fab, a: string, b: string, angle: number, w = 1, h = 1,
 }
 
 /* ---------- Properties ---------- */
+function ShapeProperties({ o, f, set, commit }: { o: Obj; f: Fab; set: (p: Record<string, unknown>) => void; commit: () => void }) {
+  const isRect = o instanceof f.Rect;
+  const width = Math.max(1, o.getScaledWidth?.() ?? o.width ?? 1);
+  const height = Math.max(1, o.getScaledHeight?.() ?? o.height ?? 1);
+  const fillAlpha = alphaOf(o.fill);
+  const strokeAlpha = alphaOf(o.stroke);
+  const setSize = (key: "width" | "height", value: number) => {
+    const base = key === "width" ? Math.max(1, o.width ?? 1) : Math.max(1, o.height ?? 1);
+    set({ [key === "width" ? "scaleX" : "scaleY"]: Math.max(0.05, value / base) });
+  };
+  const setFillGradient = () => set({ fill: makeGradient(f, "#c6f432", "#ffffff", 0) });
+  const setStrokeGradient = () => set({ stroke: makeGradient(f, "#111111", "#c6f432", 0) });
+  return (
+    <>
+      <Section title="Shape size & radius">
+        {isRect && <Slider label="Radius (%)" value={Math.round(((o.rx ?? 0) / Math.max(1, (o.width ?? width))) * 100)} min={0} max={50} onChange={(v) => set({ rx: ((o.width ?? width) * v) / 100, ry: ((o.height ?? height) * v) / 100 })} />}
+        <div className="grid grid-cols-2 gap-2">
+          <NumberField label="Width" value={width} onChange={(v) => setSize("width", v)} />
+          <NumberField label="Height" value={height} onChange={(v) => setSize("height", v)} />
+        </div>
+      </Section>
+
+      <Section title="Fill">
+        <Slider label="Opacity (%)" value={Math.round(fillAlpha * 100)} min={0} max={100} onChange={(v) => set({ fill: withAlpha(o.fill, v / 100) })} />
+        <div className="flex gap-1 text-xs">
+          <button className={`flex-1 rounded-md py-1.5 ${typeof o.fill === "string" ? "bg-muted" : "border border-border"}`} onClick={() => set({ fill: toHex(o.fill, "#c6f432") })}>Colour</button>
+          <button className={`flex-1 rounded-md py-1.5 ${typeof o.fill === "object" ? "bg-muted" : "border border-border"}`} onClick={setFillGradient}>Gradient</button>
+        </div>
+        {typeof o.fill === "string" && <Color label="Fill colour" value={toHex(o.fill, "#c6f432")} onChange={(v) => set({ fill: withAlpha(v, fillAlpha) })} />}
+      </Section>
+
+      <Section title="Stroke">
+        <Slider label="Stroke width" value={o.strokeWidth ?? 0} min={0} max={100} onChange={(v) => set({ strokeWidth: v })} />
+        <Slider label="Stroke opacity (%)" value={Math.round(strokeAlpha * 100)} min={0} max={100} onChange={(v) => set({ stroke: withAlpha(o.stroke, v / 100) })} />
+        <div className="flex gap-1 text-xs">
+          <button className={`flex-1 rounded-md py-1.5 ${typeof o.stroke === "string" ? "bg-muted" : "border border-border"}`} onClick={() => set({ stroke: toHex(o.stroke, "#111111") })}>Colour</button>
+          <button className={`flex-1 rounded-md py-1.5 ${typeof o.stroke === "object" ? "bg-muted" : "border border-border"}`} onClick={setStrokeGradient}>Gradient</button>
+        </div>
+        {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} />}
+      </Section>
+    </>
+  );
+}
+
 function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => void; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o instanceof f.IText || o instanceof f.Textbox || o instanceof f.FabricText;
   const isImg = o instanceof f.FabricImage;
+  const isShape = !isText && !isImg;
   const isLine = o instanceof f.Line;
   const text3dDepth = Number(o.text3dDepth ?? 0);
   const textReflection = !!o.textReflection;
@@ -698,7 +753,9 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
         </>
       )}
 
-      {!isImg && (
+      {isShape && <ShapeProperties o={o} f={f} set={set} commit={commit} />}
+
+      {!isImg && !isShape && (
         <Section title={isLine ? "Line color" : "Fill"}>
           {!isLine && (
             <div className="flex gap-1 text-xs">
