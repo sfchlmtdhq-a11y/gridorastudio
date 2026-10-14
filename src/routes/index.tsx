@@ -5,6 +5,7 @@ import { NewDesignDialog } from "@/components/NewDesignDialog";
 import { Logo } from "@/components/Logo";
 import { SIZE_PRESETS, deleteProject, listProjects, saveProject, type Project } from "@/lib/projects";
 import { requireSupabase } from "@/lib/supabase";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -36,6 +37,7 @@ function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [open, setOpen] = useState(false);
   const [initial, setInitial] = useState<{ w: number; h: number }>();
+  const [signOutOpen, setSignOutOpen] = useState(false);
   const refresh = async () => {
     try { setProjects(await listProjects()); } catch (error) { console.error(error); }
   };
@@ -55,7 +57,7 @@ function Dashboard() {
             <button onClick={() => openNew()} className="hidden items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground sm:inline-flex">
               <Plus className="h-4 w-4" /> New design
             </button>
-            <button aria-label="Sign out" title="Sign out" onClick={() => { void requireSupabase().auth.signOut(); }} className="rounded-lg border border-border p-2 text-muted-foreground hover:bg-muted">
+            <button aria-label="Sign out" title="Sign out" onClick={() => setSignOutOpen(true)} className="rounded-lg border border-border p-2 text-muted-foreground hover:bg-muted">
               <LogOut className="h-4 w-4" />
             </button>
           </div>
@@ -141,8 +143,17 @@ function Dashboard() {
           )}
         </section>
       </main>
+      <footer className="border-t border-border px-4 py-8 text-center text-sm text-muted-foreground sm:px-6">
+        Projects made by <span className="font-semibold text-foreground">SFCH Limited</span><br />© 2026
+      </footer>
       <button onClick={() => openNew()} aria-label="Create New Design" className="fixed bottom-5 right-5 rounded-full bg-primary p-4 text-primary-foreground shadow-glow sm:hidden"><Plus className="h-6 w-6" /></button>
       <NewDesignDialog open={open} onClose={() => setOpen(false)} {...(initial ? { initial } : {})} />
+      <AlertDialog open={signOutOpen} onOpenChange={setSignOutOpen}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] rounded-lg">
+          <AlertDialogHeader><AlertDialogTitle>Sign out of Gridora Studio?</AlertDialogTitle><AlertDialogDescription>You can sign in again later to return to your designs.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { void requireSupabase().auth.signOut(); }}>Sign out</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
