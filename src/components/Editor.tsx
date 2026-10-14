@@ -2,11 +2,11 @@ import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, t
 import { useNavigate } from "@tanstack/react-router";
 import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
-  Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock,
+  Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Grid2X2,
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, CalendarDays, Scan, RotateCcw, Pencil,
 } from "lucide-react";
 import { Logo } from "./Logo";
-import { getProject, saveProject, type Project } from "@/lib/projects";
+import { getProject, saveProject, deleteProject, type Project } from "@/lib/projects";
 import { uploadDesignAsset } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { FontPicker } from "./FontPicker";
@@ -61,9 +61,15 @@ export function Editor({ id }: { id: string }) {
   const [saveHomeOpen, setSaveHomeOpen] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ file: File; url: string; target: "element" | "background"; width: number; height: number } | null>(null);
   const [fitImportedImage, setFitImportedImage] = useState(true);
+  const [useImageAsCanvas, setUseImageAsCanvas] = useState(false);
+  const [cropRect, setCropRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [snapAlign, setSnapAlign] = useState(false);
+  const snapAlignRef = useRef(false);
+  const [alignmentGuide, setAlignmentGuide] = useState<{ axis: "x" | "y"; value: number } | null>(null);
 
   const W = () => proj.current?.width ?? 1;
   const H = () => proj.current?.height ?? 1;
+  snapAlignRef.current = snapAlign;
 
   const applyZoom = useCallback((z: number) => {
     const c = fc.current;
@@ -168,10 +174,25 @@ export function Editor({ id }: { id: string }) {
       c.on("object:added", onChange);
       c.on("object:removed", onChange);
       c.on("text:changed", onChange);
-      const onSel = () => { force(); };
+      const onSel = () => { const selected = c.getActiveObject(); if (selected?.type === "image") setTab((current) => current === "fill" ? "position" : current); force(); };
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
       c.on("selection:cleared", () => force());
+      c.on("object:moving", ({ target }: { target?: Obj }) => {
+        if (!snapAlignRef.current || !target || !["textbox", "i-text", "text"].includes(target.type)) return;
+        const tolerance = 14 / zoomRef.current, cx = W() / 2, cy = H() / 2;
+        const left = target.left ?? 0, top = target.top ?? 0, centerX = left + (target.getScaledWidth?.() ?? 0) / 2, centerY = top + (target.getScaledHeight?.() ?? 0) / 2;
+        let guide: { axis: "x" | "y"; value: number } | null = null;
+        if (Math.abs(centerX - cx) < tolerance) { target.left = cx - (target.getScaledWidth?.() ?? 0) / 2; guide = { axis: "x", value: cx }; }
+        else if (Math.abs(left - 0) < tolerance) { target.left = 0; guide = { axis: "x", value: 0 }; }
+        else if (Math.abs(centerY - cy) < tolerance) { target.top = cy - (target.getScaledHeight?.() ?? 0) / 2; guide = { axis: "y", value: cy }; }
+        else if (Math.abs(top - 0) < tolerance) { target.top = 0; guide = { axis: "y", value: 0 }; }
+        const textObjects = c.getObjects().filter((x: Obj) => x !== target && ["textbox", "i-text", "text"].includes(x.type));
+        for (const other of textObjects) {
+          if (Math.abs((target.top ?? 0) - (other.top ?? 0)) < tolerance) { target.top = other.top; guide = { axis: "y", value: other.top ?? 0 }; break; }
+        }
+        target.setCoords(); setAlignmentGuide(guide); if (guide) window.setTimeout(() => setAlignmentGuide(null), 200);
+      });
       c.on("mouse:down", ({ target }: { target?: Obj }) => {
         if (!target) { tapRef.current = { target: null, count: 0 }; setTab("bg"); setPanelOpen(true); return; }
         if (tapRef.current.target === target) tapRef.current.count += 1;
@@ -179,6 +200,12 @@ export function Editor({ id }: { id: string }) {
         setPanelOpen(tapRef.current.count >= 2);
         if (tapRef.current.count >= 2) setTab(target.type === "textbox" || target.type === "i-text" || target.type === "text" ? "textTools" : "props");
         force();
+      });
+      c.on("mouse:dblclick", ({ target }: { target?: Obj }) => {
+        if (target && ["textbox", "i-text", "text"].includes(target.type)) { tapRef.current = { target, count: 2 }; setPanelOpen(true); setTab("textTools"); target.exitEditing?.(); force(); }
+      });
+      c.on("mouse:up", ({ target }: { target?: Obj }) => {
+        if (target && ["textbox", "i-text", "text"].includes(target.type) && tapRef.current.target === target && tapRef.current.count >= 3) { target.enterEditing?.(); target.selectAll?.(); c.requestRenderAll(); }
       });
       setReady(true);
       requestAnimationFrame(() => { fit(); snapshot(); });
@@ -253,7 +280,7 @@ export function Editor({ id }: { id: string }) {
   const previewImage = (file: File | undefined, target: "element" | "background") => {
     if (!file) return;
     const url = URL.createObjectURL(file), image = new Image();
-    image.onload = () => { setPendingImage({ file, url, target, width: image.naturalWidth, height: image.naturalHeight }); setFitImportedImage(image.naturalWidth > W() || image.naturalHeight > H()); };
+    image.onload = () => { setPendingImage({ file, url, target, width: image.naturalWidth, height: image.naturalHeight }); setCropRect({ x: 0, y: 0, width: image.naturalWidth, height: image.naturalHeight }); setUseImageAsCanvas(false); setFitImportedImage(image.naturalWidth > W() || image.naturalHeight > H()); };
     image.src = url;
   };
   const onFile = (file?: File) => previewImage(file, "element");
@@ -261,7 +288,15 @@ export function Editor({ id }: { id: string }) {
   const importPendingImage = async () => {
     const pending = pendingImage, f = fab.current, c = fc.current;
     if (!pending || !f || !c) return;
-    const url = await uploadDesignAsset(pending.file, proj.current?.id);
+    let fileToUpload = pending.file;
+    if (cropRect.width > 0 && (cropRect.x !== 0 || cropRect.y !== 0 || cropRect.width !== pending.width || cropRect.height !== pending.height)) {
+      const source = new Image(); source.src = pending.url; await new Promise<void>((resolve) => { source.onload = () => resolve(); });
+      const cropCanvas = document.createElement("canvas"); cropCanvas.width = cropRect.width; cropCanvas.height = cropRect.height; cropCanvas.getContext("2d")?.drawImage(source, cropRect.x, cropRect.y, cropRect.width, cropRect.height, 0, 0, cropRect.width, cropRect.height);
+      const cropBlob = await new Promise<Blob | null>((resolve) => cropCanvas.toBlob(resolve, pending.file.type || "image/png"));
+      if (cropBlob) fileToUpload = new File([cropBlob], pending.file.name, { type: pending.file.type || "image/png" });
+    }
+    if (pending.target === "background" && useImageAsCanvas && proj.current) { proj.current = { ...proj.current, width: cropRect.width, height: cropRect.height }; c.setDimensions({ width: cropRect.width, height: cropRect.height }); }
+    const url = await uploadDesignAsset(fileToUpload, proj.current?.id);
     const img = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     if (pending.target === "element") {
       img.set({ name: "Image" });
@@ -274,7 +309,7 @@ export function Editor({ id }: { id: string }) {
     }
     URL.revokeObjectURL(pending.url); setPendingImage(null);
   };
-  const eraseImageBackground = async () => {
+  const eraseImageBackground = async (pickedColor?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => {
     const c = fc.current, f = fab.current, old = active();
     if (!c || !f || !old || old.type !== "image") return;
     const source = old.getElement?.();
@@ -284,9 +319,13 @@ export function Editor({ id }: { id: string }) {
     ctx.drawImage(source, 0, 0);
     const image = ctx.getImageData(0, 0, work.width, work.height), px = image.data;
     const samples = [0, work.width - 1, (work.height - 1) * work.width, (work.height * work.width) - 1].map((i) => [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]]);
+    const hex = pickedColor?.replace("#", "");
+    const picked = hex && hex.length === 6 ? [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)] : null;
     for (let i = 0; i < px.length; i += 4) {
       const r0 = px[i] ?? 0, g0 = px[i + 1] ?? 0, b0 = px[i + 2] ?? 0;
-      const remove = samples.some(([r = 0, g = 0, b = 0]) => Math.hypot(r0 - r, g0 - g, b0 - b) < 58);
+      const pixel = i / 4, x = pixel % work.width, y = Math.floor(pixel / work.width);
+      const inCorner = !corner || (corner === "top-left" && x < work.width / 2 && y < work.height / 2) || (corner === "top-right" && x >= work.width / 2 && y < work.height / 2) || (corner === "bottom-left" && x < work.width / 2 && y >= work.height / 2) || (corner === "bottom-right" && x >= work.width / 2 && y >= work.height / 2);
+      const remove = inCorner && (picked ? Math.hypot(r0 - (picked[0] ?? 0), g0 - (picked[1] ?? 0), b0 - (picked[2] ?? 0)) < 58 : samples.some(([r = 0, g = 0, b = 0]) => Math.hypot(r0 - r, g0 - g, b0 - b) < 58));
       if (remove) px[i + 3] = 0;
     }
     ctx.putImageData(image, 0, 0);
@@ -415,13 +454,15 @@ export function Editor({ id }: { id: string }) {
   const objects: Obj[] = ready && fc.current ? [...fc.current.getObjects()].reverse() : [];
   const openTab = (t: Tab) => { setTab(t); setPanelOpen(true); };
   const isTextSelected = !!o && ["textbox", "i-text", "text"].includes(o.type);
+  const isImageSelected = !!o && o.type === "image";
   const isElementSelected = !!o;
-  const contextualTabs: Tab[] = isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : ["bg", "layers", "edit"];
+  const contextualTabs: Tab[] = tab === "layers" ? ["layers"] : tab === "edit" ? ["edit"] : ["shapes", "stickers", "icons"].includes(tab) ? [tab] : isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isImageSelected ? ["props", "position", "stroke", "effects"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : ["bg", "layers", "edit"];
   const tabLabel: Record<Tab, string> = { props: "Properties", textTools: "Text tools", position: "Position", fill: "Fill", stroke: "Stroke", effects: "Effects", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons", bg: "Canvas", edit: "Edit" };
   const tabIcon: Record<Tab, ReactNode> = { props: <SlidersHorizontal />, textTools: <Type />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, bg: <PaintBucket />, edit: <SlidersHorizontal /> };
   const selectionBounds = o?.getBoundingRect?.();
   const canvasBounds = canvasEl.current?.getBoundingClientRect();
   const wrapBounds = wrapRef.current?.getBoundingClientRect();
+  const selectionInsideCanvas = !!selectionBounds && !!canvasBounds && selectionBounds.left < canvasBounds.width && selectionBounds.top < canvasBounds.height && selectionBounds.left + selectionBounds.width > 0 && selectionBounds.top + selectionBounds.height > 0;
   const toolbarLeft = selectionBounds && canvasBounds && wrapBounds ? Math.max(8, Math.min(wrapBounds.width - 150, canvasBounds.left - wrapBounds.left + selectionBounds.left + selectionBounds.width / 2 - 75)) : 12;
   const toolbarTop = selectionBounds && canvasBounds && wrapBounds ? Math.max(8, canvasBounds.top - wrapBounds.top + selectionBounds.top - 48) : 12;
 
@@ -461,6 +502,7 @@ export function Editor({ id }: { id: string }) {
           key={ready ? "r" : "n"}
           onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }}
         />
+        <button title="Smart alignment" aria-label="Smart alignment" onClick={() => setSnapAlign((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${snapAlign ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Grid2X2 className="h-4 w-4" /> <span className="hidden sm:inline">Align</span></button>
         <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
         <div className="ml-auto flex items-center gap-1">
           <IconBtn label="Undo" disabled={h.i <= 0} onClick={undo}><Undo2 /></IconBtn>
@@ -508,13 +550,14 @@ export function Editor({ id }: { id: string }) {
               </div>
             </div>
           </div>
-          {o && (
+          {o && selectionInsideCanvas && (
             <div className="pointer-events-auto absolute z-30 flex items-center gap-1 rounded-xl border border-border bg-card/95 p-1 shadow-xl backdrop-blur" style={{ left: toolbarLeft, top: toolbarTop }}>
-              <IconBtn label="Edit" onClick={() => { if (o.isEditing || o.type === "textbox" || o.type === "i-text") { o.enterEditing?.(); o.selectAll?.(); } else openTab("props"); }}><Pencil /></IconBtn>
+              <IconBtn label="Edit" onClick={() => openTab(["textbox", "i-text", "text"].includes(o.type) ? "textTools" : "props")}><Pencil /></IconBtn>
               <IconBtn label="Copy" onClick={() => { void dup(); }}><Copy /></IconBtn>
               <IconBtn label="Delete" className="text-destructive" onClick={del}><Trash2 /></IconBtn>
             </div>
           )}
+          {alignmentGuide && canvasBounds && wrapBounds && <div className="pointer-events-none absolute z-20 bg-primary/70" style={alignmentGuide.axis === "x" ? { left: canvasBounds.left - wrapBounds.left + alignmentGuide.value * zoom - 1, top: canvasBounds.top - wrapBounds.top, height: canvasBounds.height, width: 2 } : { left: canvasBounds.left - wrapBounds.left, top: canvasBounds.top - wrapBounds.top + alignmentGuide.value * zoom - 1, width: canvasBounds.width, height: 2 }} />}
           {/* zoom controls */}
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card/95 px-2 py-1 shadow-lg backdrop-blur">
             <IconBtn label="Zoom out" onClick={() => applyZoom(zoom / 1.2)}><ZoomOut /></IconBtn>
@@ -540,7 +583,7 @@ export function Editor({ id }: { id: string }) {
           </div>
           <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
-            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={() => { void eraseImageBackground(); }} onMaskImage={maskImage} />}
+            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(color, corner) => { void eraseImageBackground(color, corner); }} onMaskImage={maskImage} />}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
               <div className="space-y-1">
@@ -601,18 +644,19 @@ export function Editor({ id }: { id: string }) {
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
       <input ref={backgroundFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onBackgroundFile(e.target.files?.[0]); e.target.value = ""; }} />
       <AlertDialog open={!!pendingImage} onOpenChange={(open) => { if (!open && pendingImage) { URL.revokeObjectURL(pendingImage.url); setPendingImage(null); } }}>
-        <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md rounded-lg">
-          <AlertDialogHeader><AlertDialogTitle>Preview image before importing</AlertDialogTitle><AlertDialogDescription>{pendingImage ? `${pendingImage.width} × ${pendingImage.height}px` : ""}</AlertDialogDescription></AlertDialogHeader>
-          {pendingImage && <img src={pendingImage.url} alt="Image preview" className="max-h-52 w-full rounded-lg border border-border object-contain" />}
-          {pendingImage && (pendingImage.width > W() || pendingImage.height > H()) && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={fitImportedImage} onChange={(e) => setFitImportedImage(e.target.checked)} /> Fit image to the canvas size</label>}
-          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { void importPendingImage(); }}>Import image</AlertDialogAction></AlertDialogFooter>
+        <AlertDialogContent className="fixed inset-0 flex h-[100dvh] w-screen max-w-none flex-col rounded-none border-0 bg-background p-4 sm:p-8">
+          <AlertDialogHeader><AlertDialogTitle>Preview and crop image</AlertDialogTitle><AlertDialogDescription>{pendingImage ? `${cropRect.width} × ${cropRect.height}px crop · original ${pendingImage.width} × ${pendingImage.height}px` : ""}</AlertDialogDescription></AlertDialogHeader>
+          {pendingImage && <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-muted p-3"><img src={pendingImage.url} alt="Fullscreen image preview" className="mx-auto max-h-full max-w-full object-contain" /></div>}
+          {pendingImage && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><input className="field" type="number" min="0" value={cropRect.x} onChange={(e) => setCropRect({ ...cropRect, x: +e.target.value })} aria-label="Crop left" /><input className="field" type="number" min="0" value={cropRect.y} onChange={(e) => setCropRect({ ...cropRect, y: +e.target.value })} aria-label="Crop top" /><input className="field" type="number" min="1" value={cropRect.width} onChange={(e) => setCropRect({ ...cropRect, width: +e.target.value })} aria-label="Crop width" /><input className="field" type="number" min="1" value={cropRect.height} onChange={(e) => setCropRect({ ...cropRect, height: +e.target.value })} aria-label="Crop height" /></div>}
+          {pendingImage && <div className="flex flex-wrap gap-4 text-sm"><label className="flex items-center gap-2"><input type="checkbox" checked={fitImportedImage} onChange={(e) => setFitImportedImage(e.target.checked)} /> Fit image to current canvas</label>{pendingImage.target === "background" && <label className="flex items-center gap-2"><input type="checkbox" checked={useImageAsCanvas} onChange={(e) => setUseImageAsCanvas(e.target.checked)} /> Use image crop as canvas size</label>}</div>}
+          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { void importPendingImage(); }}>Confirm import</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
       <AlertDialog open={saveHomeOpen} onOpenChange={setSaveHomeOpen}>
         <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md rounded-lg">
           <AlertDialogHeader><AlertDialogTitle>Save this project before leaving?</AlertDialogTitle><AlertDialogDescription>Save it to the cloud to keep editing it later, or export a copy to your device. Leaving without saving may lose your latest changes.</AlertDialogDescription></AlertDialogHeader>
           <div className="grid gap-2 sm:grid-cols-2"><Button onClick={() => { void saveCloudAndHome(); }}>Save to cloud</Button><Button variant="outline" onClick={() => { void exportAndHome("png"); }}>Export PNG</Button><Button variant="outline" onClick={() => { void exportAndHome("jpg"); }}>Export JPG</Button><Button variant="outline" onClick={() => { void exportAndHome("pdf"); }}>Export PDF</Button></div>
-          <button className="text-center text-xs text-destructive underline" onClick={() => { setSaveHomeOpen(false); nav({ to: "/" }); }}>Leave without saving</button>
+          <button className="text-center text-xs text-destructive underline" onClick={() => { void deleteProject(id).finally(() => { setSaveHomeOpen(false); nav({ to: "/" }); }); }}>Discard project without saving</button>
         </AlertDialogContent>
       </AlertDialog>
       <AlertDialog open={transparentOpen} onOpenChange={setTransparentOpen}>
@@ -917,11 +961,13 @@ function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fa
 }
 
 type EditMode = "textTools" | "position" | "fill" | "stroke" | "effects";
-function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: () => void; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle") => void }) {
+function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: (color?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => void; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle") => void }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o.type === "textbox" || o.type === "i-text" || o.type === "text";
   const fillAlpha = alphaOf(o.fill), strokeAlpha = alphaOf(o.stroke);
   const shadow = o.shadow;
+  const [eraseColor, setEraseColor] = useState("#ffffff");
+  const [eraseCorner, setEraseCorner] = useState<"top-left" | "top-right" | "bottom-left" | "bottom-right">("top-left");
   const shadowSet = (p: Partial<{ color: string; blur: number; offsetX: number; offsetY: number }>) => set({ shadow: new f.Shadow({ color: shadow?.color ?? "#000000", blur: shadow?.blur ?? 10, offsetX: shadow?.offsetX ?? 5, offsetY: shadow?.offsetY ?? 5, ...p }) });
   if (mode === "textTools") return <Section title="Text tools">
     {o.type === "textbox" && <textarea className="field min-h-[56px]" value={o.text ?? ""} onChange={(e) => set({ text: e.target.value })} />}
@@ -952,7 +998,7 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }:
     {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} />}
   </Section>;
   return <Section title="Effects">
-    {o.type === "image" && <><button className="w-full rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={onEraseBackground}>Erase image background</button><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button></div></>}
+    {o.type === "image" && <><div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button className="flex-1 rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={() => onEraseBackground(eraseColor)}>Erase chosen colour</button></div><div className="flex gap-1"><select className="field flex-1 text-xs" value={eraseCorner} onChange={(e) => setEraseCorner(e.target.value as typeof eraseCorner)}><option value="top-left">Top-left section</option><option value="top-right">Top-right section</option><option value="bottom-left">Bottom-left section</option><option value="bottom-right">Bottom-right section</option></select><button className="rounded-md border border-border px-2 text-xs hover:bg-muted" onClick={() => onEraseBackground(undefined, eraseCorner)}>Erase section</button></div><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button></div></>}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
     {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => { const depth = e.target.checked ? 10 : 0; set({ text3dDepth: depth, shadow: e.target.checked ? new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: depth, offsetY: depth }) : null }); }} /> 3D text</label>{Number(o.text3dDepth ?? 0) > 0 && <Slider label="3D depth" value={Number(o.text3dDepth)} min={1} max={40} onChange={(v) => set({ text3dDepth: v, shadow: new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: v, offsetY: v }) })} />}<label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
