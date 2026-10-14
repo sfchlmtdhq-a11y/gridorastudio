@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
   Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock,
-  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, CalendarDays, Scan, RotateCcw,
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, CalendarDays, Scan, RotateCcw, Pencil,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, saveProject, type Project } from "@/lib/projects";
@@ -39,6 +39,7 @@ export function Editor({ id }: { id: string }) {
   const canvasEl = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const backgroundFileRef = useRef<HTMLInputElement>(null);
   const fc = useRef<Obj>(null);
   const fab = useRef<Fab | null>(null);
   const proj = useRef<Project | null>(null);
@@ -167,6 +168,7 @@ export function Editor({ id }: { id: string }) {
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
       c.on("selection:cleared", () => force());
+      c.on("mouse:down", ({ target }: { target?: Obj }) => { if (!target) { setTab("bg"); setPanelOpen(true); } });
       setReady(true);
       requestAnimationFrame(() => { fit(); snapshot(); });
       document.fonts?.ready.then(() => c.requestRenderAll());
@@ -248,6 +250,20 @@ export function Editor({ id }: { id: string }) {
       const max = Math.min(W(), H()) * 0.8;
       if (img.width > max || img.height > max) img.scale(max / Math.max(img.width, img.height));
       add(img);
+    })().catch(console.error);
+  };
+  const onBackgroundFile = (file?: File) => {
+    if (!file) return;
+    void (async () => {
+      const c = fc.current, f = fab.current;
+      if (!c || !f) return;
+      const url = await uploadDesignAsset(file, proj.current?.id);
+      const img = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+      const scale = Math.max(W() / Math.max(1, img.width), H() / Math.max(1, img.height));
+      img.set({ left: 0, top: 0, originX: "left", originY: "top", scaleX: scale, scaleY: scale });
+      c.backgroundImage = img;
+      c.requestRenderAll();
+      commit();
     })().catch(console.error);
   };
 
@@ -357,6 +373,11 @@ export function Editor({ id }: { id: string }) {
   const h = hist.current;
   const objects: Obj[] = ready && fc.current ? [...fc.current.getObjects()].reverse() : [];
   const openTab = (t: Tab) => { setTab(t); setPanelOpen(true); };
+  const selectionBounds = o?.getBoundingRect?.();
+  const canvasBounds = canvasEl.current?.getBoundingClientRect();
+  const wrapBounds = wrapRef.current?.getBoundingClientRect();
+  const toolbarLeft = selectionBounds && canvasBounds && wrapBounds ? Math.max(8, Math.min(wrapBounds.width - 150, canvasBounds.left - wrapBounds.left + selectionBounds.left + selectionBounds.width / 2 - 75)) : 12;
+  const toolbarTop = selectionBounds && canvasBounds && wrapBounds ? Math.max(8, canvasBounds.top - wrapBounds.top + selectionBounds.top - 48) : 12;
 
   const addDate = () => {
     const f = fab.current;
@@ -438,6 +459,13 @@ export function Editor({ id }: { id: string }) {
               </div>
             </div>
           </div>
+          {o && (
+            <div className="pointer-events-auto absolute z-30 flex items-center gap-1 rounded-xl border border-border bg-card/95 p-1 shadow-xl backdrop-blur" style={{ left: toolbarLeft, top: toolbarTop }}>
+              <IconBtn label="Edit" onClick={() => { if (o.isEditing || o.type === "textbox" || o.type === "i-text") { o.enterEditing?.(); o.selectAll?.(); } else openTab("props"); }}><Pencil /></IconBtn>
+              <IconBtn label="Copy" onClick={() => { void dup(); }}><Copy /></IconBtn>
+              <IconBtn label="Delete" className="text-destructive" onClick={del}><Trash2 /></IconBtn>
+            </div>
+          )}
           {/* zoom controls */}
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card/95 px-2 py-1 shadow-lg backdrop-blur">
             <IconBtn label="Zoom out" onClick={() => applyZoom(zoom / 1.2)}><ZoomOut /></IconBtn>
@@ -484,7 +512,7 @@ export function Editor({ id }: { id: string }) {
                 )}
               </div>
             )}
-            {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} />}
+            {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} />}
             {ready && tab === "shapes" && (
               <Grid>
                 {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line"].map((k) => (
@@ -519,6 +547,7 @@ export function Editor({ id }: { id: string }) {
         </div>
       </div>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
+      <input ref={backgroundFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onBackgroundFile(e.target.files?.[0]); e.target.value = ""; }} />
       <AlertDialog open={transparentOpen} onOpenChange={setTransparentOpen}>
         <AlertDialogContent className="w-[calc(100%-2rem)] rounded-lg">
           <AlertDialogHeader><AlertDialogTitle>Make the background transparent?</AlertDialogTitle><AlertDialogDescription>This removes the canvas background color or gradient. Your images, text and other layers stay unchanged.</AlertDialogDescription></AlertDialogHeader>
@@ -846,7 +875,7 @@ function ImageCrop({ o, set }: { o: Obj; set: (p: Record<string, unknown>) => vo
 }
 
 /* ---------- Canvas panel ---------- */
-function CanvasPanel({ c, f, proj, commit, resize }: { c: Obj; f: Fab; proj: Project; commit: () => void; resize: (w: number, h: number) => void }) {
+function CanvasPanel({ c, f, proj, commit, addImage, resize }: { c: Obj; f: Fab; proj: Project; commit: () => void; addImage: () => void; resize: (w: number, h: number) => void }) {
   const bg = c.backgroundColor;
   const mode = !bg ? "none" : typeof bg === "string" ? "solid" : "gradient";
   const [g, setG] = useState({ a: "#0f172a", b: "#c6f432", angle: 45 });
@@ -856,10 +885,11 @@ function CanvasPanel({ c, f, proj, commit, resize }: { c: Obj; f: Fab; proj: Pro
   return (
     <div>
       <Section title="Background">
+        <button className="flex w-full items-center justify-center gap-2 rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={addImage}><ImagePlus className="h-4 w-4" /> Add background image</button>
         <div className="flex gap-1 text-xs">
           {(["solid", "gradient", "none"] as const).map((m) => (
             <button key={m} className={`flex-1 rounded-md py-1.5 capitalize ${mode === m ? "bg-muted" : "text-muted-foreground"}`}
-              onClick={() => { if (m === "solid") c.backgroundColor = "#ffffff"; else if (m === "none") c.backgroundColor = ""; else return grad(g); commit(); }}>
+              onClick={() => { c.backgroundImage = undefined; if (m === "solid") c.backgroundColor = "#ffffff"; else if (m === "none") c.backgroundColor = ""; else return grad(g); commit(); }}>
               {m === "none" ? "Transparent" : m}
             </button>
           ))}
