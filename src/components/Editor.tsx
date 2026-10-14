@@ -269,10 +269,34 @@ export function Editor({ id }: { id: string }) {
       const img = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
       const scale = Math.max(W() / Math.max(1, img.width), H() / Math.max(1, img.height));
       img.set({ left: 0, top: 0, originX: "left", originY: "top", scaleX: scale, scaleY: scale });
+      c.backgroundColor = "";
       c.backgroundImage = img;
       c.requestRenderAll();
       commit();
     })().catch(console.error);
+  };
+  const eraseImageBackground = async () => {
+    const c = fc.current, f = fab.current, old = active();
+    if (!c || !f || !old || old.type !== "image") return;
+    const source = old.getElement?.();
+    if (!source?.naturalWidth || !source?.naturalHeight) return;
+    const work = document.createElement("canvas"); work.width = source.naturalWidth; work.height = source.naturalHeight;
+    const ctx = work.getContext("2d"); if (!ctx) return;
+    ctx.drawImage(source, 0, 0);
+    const image = ctx.getImageData(0, 0, work.width, work.height), px = image.data;
+    const samples = [0, work.width - 1, (work.height - 1) * work.width, (work.height * work.width) - 1].map((i) => [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]]);
+    for (let i = 0; i < px.length; i += 4) {
+      const r0 = px[i] ?? 0, g0 = px[i + 1] ?? 0, b0 = px[i + 2] ?? 0;
+      const remove = samples.some(([r = 0, g = 0, b = 0]) => Math.hypot(r0 - r, g0 - g, b0 - b) < 58);
+      if (remove) px[i + 3] = 0;
+    }
+    ctx.putImageData(image, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => work.toBlob(resolve, "image/png"));
+    if (!blob) return;
+    const url = await uploadDesignAsset(new File([blob], "background-erased.png", { type: "image/png" }), proj.current?.id);
+    const next = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    next.set({ left: old.left, top: old.top, scaleX: old.scaleX, scaleY: old.scaleY, angle: old.angle, flipX: old.flipX, flipY: old.flipY, originX: old.originX, originY: old.originY, name: old.name });
+    c.remove(old); c.add(next); c.setActiveObject(next); c.requestRenderAll(); commit();
   };
 
   const del = () => {
@@ -492,17 +516,19 @@ export function Editor({ id }: { id: string }) {
 
         {/* side panel */}
         <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 h-[24vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:h-[22vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
-          <div className="flex items-center gap-1 border-b border-border p-2">
+          <div className="flex min-w-0 items-center gap-1 border-b border-border p-2">
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overscroll-contain whitespace-nowrap">
             {contextualTabs.map((t) => (
-              <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
+              <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`shrink-0 px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
                 <span className="inline-flex items-center gap-1 [&_svg]:h-4 [&_svg]:w-4">{tabIcon[t]}{tabLabel[t]}</span>
               </Button>
             ))}
+            </div>
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
           <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
-            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} />}
+            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={() => { void eraseImageBackground(); }} />}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
               <div className="space-y-1">
@@ -864,7 +890,7 @@ function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fa
 }
 
 type EditMode = "textTools" | "position" | "fill" | "stroke" | "effects";
-function ContextualTools({ o, f, mode, commit }: { o: Obj; f: Fab; mode: EditMode; commit: () => void }) {
+function ContextualTools({ o, f, mode, commit, onEraseBackground }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: () => void }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o.type === "textbox" || o.type === "i-text" || o.type === "text";
   const fillAlpha = alphaOf(o.fill), strokeAlpha = alphaOf(o.stroke);
@@ -899,6 +925,7 @@ function ContextualTools({ o, f, mode, commit }: { o: Obj; f: Fab; mode: EditMod
     {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} />}
   </Section>;
   return <Section title="Effects">
+    {o.type === "image" && <button className="w-full rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={onEraseBackground}>Erase image background</button>}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
     {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => set({ text3dDepth: e.target.checked ? 10 : 0 })} /> 3D text</label><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
@@ -942,6 +969,7 @@ function ImageCrop({ o, set }: { o: Obj; set: (p: Record<string, unknown>) => vo
 /* ---------- Canvas panel ---------- */
 function CanvasPanel({ c, f, proj, commit, addImage, resize }: { c: Obj; f: Fab; proj: Project; commit: () => void; addImage: () => void; resize: (w: number, h: number) => void }) {
   const bg = c.backgroundColor;
+  const bgImage = c.backgroundImage;
   const mode = !bg ? "none" : typeof bg === "string" ? "solid" : "gradient";
   const [g, setG] = useState({ a: "#0f172a", b: "#c6f432", angle: 45 });
   const [w, setW] = useState(proj.width);
@@ -950,6 +978,11 @@ function CanvasPanel({ c, f, proj, commit, addImage, resize }: { c: Obj; f: Fab;
   return (
     <div>
       <Section title="Background">
+        <div className="flex items-center gap-2 rounded-lg border border-border p-2">
+          {bgImage ? <img className="h-10 w-10 rounded object-cover" src={bgImage.getElement?.()?.src} alt="Current background" /> : <span className="h-10 w-10 rounded border border-border" style={{ background: typeof bg === "string" && bg ? bg : "#ffffff" }} />}
+          <div className="min-w-0 flex-1"><p className="text-xs font-medium">Current background</p><p className="truncate text-[11px] text-muted-foreground">{bgImage ? "Image" : mode === "none" ? "White / transparent" : mode}</p></div>
+          <button className="rounded-md border border-border px-2 py-1 text-xs text-destructive hover:bg-muted" onClick={() => { c.backgroundImage = undefined; c.backgroundColor = "#ffffff"; commit(); }}>Delete</button>
+        </div>
         <button className="flex w-full items-center justify-center gap-2 rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={addImage}><ImagePlus className="h-4 w-4" /> Add background image</button>
         <div className="flex gap-1 text-xs">
           {(["solid", "gradient", "none"] as const).map((m) => (
