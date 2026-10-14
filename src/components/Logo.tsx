@@ -4,12 +4,7 @@ import type { MouseEvent } from "react";
 export function Logo({ compact, onClick }: { compact?: boolean; onClick?: (event: MouseEvent<HTMLAnchorElement>) => void }) {
   return (
     <Link to="/" onClick={onClick} className="flex items-center gap-2">
-      <span className="grid h-8 w-8 grid-cols-2 gap-0.5 rounded-lg bg-primary p-1.5">
-        <span className="rounded-[2px] bg-primary-foreground" />
-        <span className="rounded-[2px] bg-primary-foreground/40" />
-        <span className="rounded-[2px] bg-primary-foreground/40" />
-        <span className="rounded-[2px] bg-primary-foreground" />
-      </span>
+      <img src="/gridora-mark.svg" alt="Gridora Studio" className="h-8 w-8 rounded-lg" />
       {!compact && (
         <span className="font-display text-lg font-bold tracking-tight">
           Gridora<span className="text-primary"> Studio</span>
