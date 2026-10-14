@@ -16,7 +16,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 type Fab = typeof import("fabric");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Obj = any;
-const PROPS = ["name", "selectable", "evented", "lockedLayer"];
+const PROPS = ["name", "selectable", "evented", "lockedLayer", "text3dDepth", "textReflection"];
 const STICKERS = ["😀", "😍", "🔥", "✨", "🎉", "❤️", "👍", "💯", "⭐", "🌟", "🎁", "🎂", "🌈", "☀️", "🌙", "⚡", "🍕", "☕", "🎵", "📸", "🚀", "💎", "👑", "🏆", "🌸", "🍀", "🦋", "🐱", "🎈", "💥", "✅", "📍"];
 const ICONS: Record<string, string> = {
   Heart: "M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z",
@@ -163,7 +163,7 @@ export function Editor({ id }: { id: string }) {
       c.on("object:added", onChange);
       c.on("object:removed", onChange);
       c.on("text:changed", onChange);
-      const onSel = () => { force(); if (c.getActiveObject()) setTab(current => current === "layers" || current === "edit" ? current : "props"); };
+      const onSel = () => { force(); if (c.getActiveObject()) { setTab(current => current === "layers" || current === "edit" ? current : "props"); setPanelOpen(true); } };
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
       c.on("selection:cleared", () => force());
@@ -570,6 +570,14 @@ function Slider({ label, value, min, max, step = 1, onChange }: { label: string;
     </label>
   );
 }
+function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="block text-[11px] text-muted-foreground">
+      {label}
+      <input type="number" className="field mt-1 h-8 px-2 text-xs" value={Math.round(value * 100) / 100} onChange={(e) => onChange(Number(e.target.value))} />
+    </label>
+  );
+}
 function Color({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <label className="flex items-center justify-between text-xs text-muted-foreground">
@@ -592,6 +600,8 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
   const isText = o instanceof f.IText || o instanceof f.Textbox || o instanceof f.FabricText;
   const isImg = o instanceof f.FabricImage;
   const isLine = o instanceof f.Line;
+  const text3dDepth = Number(o.text3dDepth ?? 0);
+  const textReflection = !!o.textReflection;
   const gradFill = o.fill && typeof o.fill === "object";
   const stops = gradFill ? o.fill.colorStops : null;
   const [g, setG] = useState({ a: stops?.[0]?.color ?? "#ff4d6d", b: stops?.[1]?.color ?? "#ffb703", angle: 0 });
@@ -613,23 +623,79 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
       </div>
 
       {isText && (
-        <Section title="Text">
+        <>
+          <Section title="Text tools">
+            <div className="grid grid-cols-2 gap-2">
+              <button className="rounded-md bg-primary px-2 py-2 text-xs font-semibold text-primary-foreground" onClick={() => { (o as Obj).enterEditing?.(); (o as Obj).selectAll?.(); o.canvas?.requestRenderAll(); }}>Edit text</button>
+              <button className="rounded-md border border-border px-2 py-2 text-xs hover:bg-muted" onClick={actions.dup}>Copy</button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="rounded-md border border-border px-2 py-2 text-xs hover:bg-muted" onClick={actions.del}>Delete</button>
+              <button className="rounded-md border border-border px-2 py-2 text-xs hover:bg-muted" onClick={() => set({ backgroundColor: o.backgroundColor ? "" : "#fff3a3" })}>Background</button>
+            </div>
+          </Section>
+
+          <Section title="Position">
+            <div className="grid grid-cols-2 gap-2">
+              <NumberField label="X" value={o.left ?? 0} onChange={(v) => set({ left: v })} />
+              <NumberField label="Y" value={o.top ?? 0} onChange={(v) => set({ top: v })} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <NumberField label="Relative X %" value={((o.left ?? 0) / Math.max(1, o.canvas?.getWidth?.() ?? 1)) * 100} onChange={(v) => set({ left: (v / 100) * (o.canvas?.getWidth?.() ?? 1) })} />
+              <NumberField label="Relative Y %" value={((o.top ?? 0) / Math.max(1, o.canvas?.getHeight?.() ?? 1)) * 100} onChange={(v) => set({ top: (v / 100) * (o.canvas?.getHeight?.() ?? 1) })} />
+            </div>
+          </Section>
+
+          <Section title="Size & padding">
+            <div className="grid grid-cols-2 gap-2">
+              <NumberField label="Width" value={o.getScaledWidth?.() ?? o.width ?? 0} onChange={(v) => set({ scaleX: Math.max(0.05, v / Math.max(1, o.width ?? 1)) })} />
+              <NumberField label="Height" value={o.getScaledHeight?.() ?? o.height ?? 0} onChange={(v) => set({ scaleY: Math.max(0.05, v / Math.max(1, o.height ?? 1)) })} />
+            </div>
+            <NumberField label="Padding" value={o.padding ?? 0} onChange={(v) => set({ padding: Math.max(0, v) })} />
+          </Section>
+
           {o instanceof f.Textbox && (
             <textarea className="field min-h-[60px]" value={o.text} onChange={(e) => set({ text: e.target.value })} />
           )}
-          <FontPicker value={o.fontFamily} onChange={v => { set({ fontFamily: v }); document.fonts?.load(`40px "${v}"`).then(() => { o.set({ fontFamily: v }); o.initDimensions?.(); commit(); }); }} />
-          <Slider label="Font size" value={o.fontSize} min={6} max={600} onChange={(v) => set({ fontSize: v })} />
-          <div className="flex gap-1">
-            <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
-            <IconBtn label="Italic" active={o.fontStyle === "italic"} onClick={() => set({ fontStyle: o.fontStyle === "italic" ? "normal" : "italic" })}><Italic /></IconBtn>
-            <span className="mx-1 w-px bg-border" />
-            <IconBtn label="Align left" active={o.textAlign === "left"} onClick={() => set({ textAlign: "left" })}><AlignLeft /></IconBtn>
-            <IconBtn label="Align center" active={o.textAlign === "center"} onClick={() => set({ textAlign: "center" })}><AlignCenter /></IconBtn>
-            <IconBtn label="Align right" active={o.textAlign === "right"} onClick={() => set({ textAlign: "right" })}><AlignRight /></IconBtn>
-          </div>
-          <Slider label="Letter spacing" value={o.charSpacing ?? 0} min={-200} max={1000} onChange={(v) => set({ charSpacing: v })} />
-          <Slider label="Line height" value={o.lineHeight ?? 1.16} min={0.5} max={3} step={0.05} onChange={(v) => set({ lineHeight: v })} />
-        </Section>
+          <Section title="Font & style">
+            <FontPicker value={o.fontFamily} onChange={v => { set({ fontFamily: v }); document.fonts?.load(`40px "${v}"`).then(() => { o.set({ fontFamily: v }); o.initDimensions?.(); commit(); }); }} />
+            <Slider label="Font size" value={o.fontSize} min={6} max={600} onChange={(v) => set({ fontSize: v })} />
+            <div className="flex flex-wrap gap-1">
+              <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
+              <IconBtn label="Italic" active={o.fontStyle === "italic"} onClick={() => set({ fontStyle: o.fontStyle === "italic" ? "normal" : "italic" })}><Italic /></IconBtn>
+              <button className={`rounded-md px-2 text-xs ${o.underline ? "bg-muted" : "hover:bg-muted"}`} onClick={() => set({ underline: !o.underline })}>Underline</button>
+              <button className={`rounded-md px-2 text-xs ${o.linethrough ? "bg-muted" : "hover:bg-muted"}`} onClick={() => set({ linethrough: !o.linethrough })}>Strike</button>
+            </div>
+            <div className="flex gap-1">
+              <IconBtn label="Align left" active={o.textAlign === "left"} onClick={() => set({ textAlign: "left" })}><AlignLeft /></IconBtn>
+              <IconBtn label="Align center" active={o.textAlign === "center"} onClick={() => set({ textAlign: "center" })}><AlignCenter /></IconBtn>
+              <IconBtn label="Align right" active={o.textAlign === "right"} onClick={() => set({ textAlign: "right" })}><AlignRight /></IconBtn>
+            </div>
+            <Slider label="Letter spacing" value={o.charSpacing ?? 0} min={-200} max={1000} onChange={(v) => set({ charSpacing: v })} />
+            <Slider label="Line height" value={o.lineHeight ?? 1.16} min={0.5} max={3} step={0.05} onChange={(v) => set({ lineHeight: v })} />
+          </Section>
+
+          <Section title="Colour & texture">
+            <Color label="Colour" value={toHex(o.fill, "#111111")} onChange={(v) => set({ fill: v })} />
+            <div className="flex gap-1 text-xs">
+              <button className="flex-1 rounded-md bg-muted py-1.5">Solid</button>
+              <button className="flex-1 rounded-md border border-border py-1.5" onClick={() => set({ fill: makeGradient(f, toHex(o.fill, "#c6f432"), "#ffffff", 0) })}>Texture / gradient</button>
+            </div>
+          </Section>
+
+          <Section title="3D text & reflection">
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={text3dDepth > 0} onChange={(e) => { const depth = e.target.checked ? 10 : 0; set({ text3dDepth: depth, shadow: e.target.checked ? new f.Shadow({ color: "rgba(0,0,0,0.35)", blur: 0, offsetX: depth, offsetY: depth }) : null }); }} />
+              3D text
+            </label>
+            {text3dDepth > 0 && <Slider label="Depth" value={text3dDepth} min={1} max={40} onChange={(v) => set({ text3dDepth: v, shadow: new f.Shadow({ color: "rgba(0,0,0,0.35)", blur: 0, offsetX: v, offsetY: v }) })} />}
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={textReflection} onChange={(e) => set({ textReflection: e.target.checked })} />
+              Reflection
+            </label>
+            {textReflection && <p className="text-[11px] text-muted-foreground">Reflection is saved with this text layer.</p>}
+          </Section>
+        </>
       )}
 
       {!isImg && (
