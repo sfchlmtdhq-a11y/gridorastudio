@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
   Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Grid2X2,
-  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, CalendarDays, Scan, RotateCcw, Pencil,
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, saveProject, deleteProject, type Project } from "@/lib/projects";
@@ -16,7 +16,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 type Fab = typeof import("fabric");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Obj = any;
-const PROPS = ["name", "selectable", "evented", "lockedLayer", "text3dDepth", "textReflection"];
+const PROPS = ["name", "selectable", "evented", "lockedLayer", "text3dDepth", "textReflection", "textCurve"];
 const STICKERS = ["😀", "😍", "🔥", "✨", "🎉", "❤️", "👍", "💯", "⭐", "🌟", "🎁", "🎂", "🌈", "☀️", "🌙", "⚡", "🍕", "☕", "🎵", "📸", "🚀", "💎", "👑", "🏆", "🌸", "🍀", "🦋", "🐱", "🎈", "💥", "✅", "📍"];
 const ICONS: Record<string, string> = {
   Heart: "M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z",
@@ -70,6 +70,7 @@ export function Editor({ id }: { id: string }) {
   const W = () => proj.current?.width ?? 1;
   const H = () => proj.current?.height ?? 1;
   snapAlignRef.current = snapAlign;
+  const closeVirtualKeyboard = () => { const element = document.activeElement; if (element instanceof HTMLElement && element !== document.body) element.blur(); };
 
   const applyZoom = useCallback((z: number) => {
     const c = fc.current;
@@ -201,12 +202,13 @@ export function Editor({ id }: { id: string }) {
         if (!target) { tapRef.current = { target: null, count: 0 }; setTab("bg"); setPanelOpen(true); return; }
         if (tapRef.current.target === target) tapRef.current.count += 1;
         else tapRef.current = { target, count: 1 };
+        if (tapRef.current.count < 3) closeVirtualKeyboard();
         setPanelOpen(tapRef.current.count >= 2);
-        if (tapRef.current.count >= 2) setTab(target.type === "textbox" || target.type === "i-text" || target.type === "text" ? "textTools" : "props");
+        if (tapRef.current.count >= 2) setTab("props");
         force();
       });
       c.on("mouse:dblclick", ({ target }: { target?: Obj }) => {
-        if (target && ["textbox", "i-text", "text"].includes(target.type)) { tapRef.current = { target, count: 2 }; setPanelOpen(true); setTab("textTools"); target.exitEditing?.(); force(); }
+        if (target && ["textbox", "i-text", "text"].includes(target.type)) { tapRef.current = { target, count: 2 }; setPanelOpen(true); setTab("props"); target.exitEditing?.(); force(); }
       });
       c.on("mouse:up", ({ target }: { target?: Obj }) => {
         if (target && ["textbox", "i-text", "text"].includes(target.type) && tapRef.current.target === target && tapRef.current.count >= 3) { target.enterEditing?.(); target.selectAll?.(); c.requestRenderAll(); }
@@ -340,7 +342,7 @@ export function Editor({ id }: { id: string }) {
     next.set({ left: old.left, top: old.top, scaleX: old.scaleX, scaleY: old.scaleY, angle: old.angle, flipX: old.flipX, flipY: old.flipY, originX: old.originX, originY: old.originY, name: old.name });
     c.remove(old); c.add(next); c.setActiveObject(next); c.requestRenderAll(); commit();
   };
-  const maskImage = (shape: "square" | "circle" | "rounded" | "triangle") => {
+  const maskImage = (shape: "square" | "circle" | "rounded" | "triangle" | "star" | "heart" | "polygon") => {
     const c = fc.current, f = fab.current, o = active();
     if (!c || !f || !o || o.type !== "image") return;
     const w = o.width ?? 1, h = o.height ?? 1;
@@ -348,6 +350,8 @@ export function Editor({ id }: { id: string }) {
     if (shape === "circle") o.clipPath = new f.Circle({ radius: Math.min(w, h) / 2, originX: "center", originY: "center" });
     if (shape === "rounded") o.clipPath = new f.Rect({ width: w, height: h, rx: Math.min(w, h) * 0.18, ry: Math.min(w, h) * 0.18, originX: "center", originY: "center" });
     if (shape === "triangle") o.clipPath = new f.Triangle({ width: w, height: h, originX: "center", originY: "center" });
+    if (shape === "star" || shape === "polygon") { const n = shape === "star" ? 10 : 6, points = Array.from({ length: n }, (_, i) => { const a = Math.PI * 2 * i / n - Math.PI / 2, r = shape === "star" && i % 2 ? 0.22 : 0.5; return { x: w / 2 + Math.cos(a) * w * r, y: h / 2 + Math.sin(a) * h * r }; }); o.clipPath = new f.Polygon(points, { originX: "center", originY: "center" }); }
+    if (shape === "heart") { const heart = new f.Path("M 50 88 C 42 78 10 60 10 35 C 10 12 38 8 50 28 C 62 8 90 12 90 35 C 90 60 58 78 50 88 Z", { originX: "center", originY: "center" }); heart.scaleX = w / 100; heart.scaleY = h / 100; o.clipPath = heart; }
     o.setCoords(); c.requestRenderAll(); commit();
   };
 
@@ -648,10 +652,10 @@ export function Editor({ id }: { id: string }) {
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
       <input ref={backgroundFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onBackgroundFile(e.target.files?.[0]); e.target.value = ""; }} />
       <AlertDialog open={!!pendingImage} onOpenChange={(open) => { if (!open && pendingImage) { URL.revokeObjectURL(pendingImage.url); setPendingImage(null); } }}>
-        <AlertDialogContent className="fixed inset-0 flex h-[100dvh] w-screen max-w-none flex-col rounded-none border-0 bg-background p-4 sm:p-8">
+        <AlertDialogContent className="fixed inset-0 flex h-[100svh] max-h-[100dvh] w-[100vw] max-w-none flex-col overflow-hidden rounded-none border-0 bg-background p-3 sm:h-[100dvh] sm:p-8">
           <AlertDialogHeader><AlertDialogTitle>Preview and crop image</AlertDialogTitle><AlertDialogDescription>{pendingImage ? `${cropRect.width} × ${cropRect.height}px crop · original ${pendingImage.width} × ${pendingImage.height}px` : ""}</AlertDialogDescription></AlertDialogHeader>
-          {pendingImage && <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-muted p-3"><img src={pendingImage.url} alt="Fullscreen image preview" className="mx-auto max-h-full max-w-full object-contain" /></div>}
-          {pendingImage && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><input className="field" type="number" min="0" value={cropRect.x} onChange={(e) => setCropRect({ ...cropRect, x: +e.target.value })} aria-label="Crop left" /><input className="field" type="number" min="0" value={cropRect.y} onChange={(e) => setCropRect({ ...cropRect, y: +e.target.value })} aria-label="Crop top" /><input className="field" type="number" min="1" value={cropRect.width} onChange={(e) => setCropRect({ ...cropRect, width: +e.target.value })} aria-label="Crop width" /><input className="field" type="number" min="1" value={cropRect.height} onChange={(e) => setCropRect({ ...cropRect, height: +e.target.value })} aria-label="Crop height" /></div>}
+          {pendingImage && <div className="h-[42svh] min-h-0 shrink-0 overflow-auto rounded-lg border border-border bg-muted p-2 sm:h-auto sm:flex-1"><img src={pendingImage.url} alt="Fullscreen image preview" className="mx-auto h-full max-h-full max-w-full object-contain" /></div>}
+          {pendingImage && <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4"><input className="field h-9" type="number" min="0" value={cropRect.x} onChange={(e) => setCropRect({ ...cropRect, x: +e.target.value })} aria-label="Crop left" /><input className="field h-9" type="number" min="0" value={cropRect.y} onChange={(e) => setCropRect({ ...cropRect, y: +e.target.value })} aria-label="Crop top" /><input className="field h-9" type="number" min="1" value={cropRect.width} onChange={(e) => setCropRect({ ...cropRect, width: +e.target.value })} aria-label="Crop width" /><input className="field h-9" type="number" min="1" value={cropRect.height} onChange={(e) => setCropRect({ ...cropRect, height: +e.target.value })} aria-label="Crop height" /></div>}
           {pendingImage && <div className="flex flex-wrap gap-4 text-sm"><label className="flex items-center gap-2"><input type="checkbox" checked={fitImportedImage} onChange={(e) => setFitImportedImage(e.target.checked)} /> Fit image to current canvas</label>{pendingImage.target === "background" && <label className="flex items-center gap-2"><input type="checkbox" checked={useImageAsCanvas} onChange={(e) => setUseImageAsCanvas(e.target.checked)} /> Use image crop as canvas size</label>}</div>}
           <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { void importPendingImage(); }}>Confirm import</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
@@ -965,19 +969,25 @@ function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fa
 }
 
 type EditMode = "textTools" | "position" | "fill" | "stroke" | "effects";
-function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: (color?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => void; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle") => void }) {
+function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: (color?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => void; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle" | "star" | "heart" | "polygon") => void }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o.type === "textbox" || o.type === "i-text" || o.type === "text";
   const fillAlpha = alphaOf(o.fill), strokeAlpha = alphaOf(o.stroke);
   const shadow = o.shadow;
   const [eraseColor, setEraseColor] = useState("#ffffff");
   const [eraseCorner, setEraseCorner] = useState<"top-left" | "top-right" | "bottom-left" | "bottom-right">("top-left");
+  const nudgeTimer = useRef<number | undefined>(undefined);
+  const nudge = (dx: number, dy: number) => set({ left: (o.left ?? 0) + dx, top: (o.top ?? 0) + dy });
+  const startNudge = (dx: number, dy: number) => { nudge(dx, dy); window.clearTimeout(nudgeTimer.current); nudgeTimer.current = window.setTimeout(() => { nudgeTimer.current = window.setInterval(() => nudge(dx * 5, dy * 5), 140); }, 1000); };
+  const stopNudge = () => { window.clearTimeout(nudgeTimer.current); window.clearInterval(nudgeTimer.current); nudgeTimer.current = undefined; };
+  const setCurve = (amount: number) => { o.textCurve = amount; if (amount === 0) o.path = undefined; else o.path = new f.Path(`M 0 0 Q ${(o.width ?? 200) / 2} ${-amount} ${o.width ?? 200} 0`, { fill: "" }); commit(); };
   const shadowSet = (p: Partial<{ color: string; blur: number; offsetX: number; offsetY: number }>) => set({ shadow: new f.Shadow({ color: shadow?.color ?? "#000000", blur: shadow?.blur ?? 10, offsetX: shadow?.offsetX ?? 5, offsetY: shadow?.offsetY ?? 5, ...p }) });
   if (mode === "textTools") return <Section title="Text tools">
     {o.type === "textbox" && <textarea className="field min-h-[56px]" value={o.text ?? ""} onChange={(e) => set({ text: e.target.value })} />}
     <FontPicker value={o.fontFamily ?? "Manrope"} onChange={(v) => { set({ fontFamily: v }); document.fonts?.load(`40px "${v}"`).then(() => { o.set({ fontFamily: v }); o.initDimensions?.(); commit(); }); }} />
     <Slider label="Font size" value={o.fontSize ?? 24} min={6} max={600} onChange={(v) => set({ fontSize: v })} />
     <Color label="Colour" value={toHex(o.fill, "#111111")} onChange={(v) => set({ fill: v })} />
+    <Slider label="Text curve" value={Number(o.textCurve ?? 0)} min={-160} max={160} onChange={setCurve} />
     <div className="flex flex-wrap gap-1">
       <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
       <IconBtn label="Italic" active={o.fontStyle === "italic"} onClick={() => set({ fontStyle: o.fontStyle === "italic" ? "normal" : "italic" })}><Italic /></IconBtn>
@@ -986,6 +996,7 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }:
     </div>
   </Section>;
   if (mode === "position") return <Section title="Position & size">
+    <div className="mx-auto grid w-28 grid-cols-3 gap-1"><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(0, -1)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowUp className="mx-auto h-4 w-4" /></button><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(-1, 0)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowLeft className="mx-auto h-4 w-4" /></button><span className="flex items-center justify-center text-[10px] text-muted-foreground">1px</span><button className="rounded border border-border p-2" onPointerDown={() => startNudge(1, 0)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowRight className="mx-auto h-4 w-4" /></button><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(0, 1)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowDown className="mx-auto h-4 w-4" /></button><span /></div>
     <div className="grid grid-cols-2 gap-2"><NumberField label="X" value={o.left ?? 0} onChange={(v) => set({ left: v })} /><NumberField label="Y" value={o.top ?? 0} onChange={(v) => set({ top: v })} /></div>
     <div className="grid grid-cols-2 gap-2"><NumberField label="Width" value={o.getScaledWidth?.() ?? o.width ?? 0} onChange={(v) => set({ scaleX: v / Math.max(1, o.width ?? 1) })} /><NumberField label="Height" value={o.getScaledHeight?.() ?? o.height ?? 0} onChange={(v) => set({ scaleY: v / Math.max(1, o.height ?? 1) })} /></div>
     {isText && <NumberField label="Padding" value={o.padding ?? 0} onChange={(v) => set({ padding: v })} />}
@@ -1002,7 +1013,7 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }:
     {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} />}
   </Section>;
   return <Section title="Effects">
-    {o.type === "image" && <><div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button className="flex-1 rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={() => onEraseBackground(eraseColor)}>Erase chosen colour</button></div><div className="flex gap-1"><select className="field flex-1 text-xs" value={eraseCorner} onChange={(e) => setEraseCorner(e.target.value as typeof eraseCorner)}><option value="top-left">Top-left section</option><option value="top-right">Top-right section</option><option value="bottom-left">Bottom-left section</option><option value="bottom-right">Bottom-right section</option></select><button className="rounded-md border border-border px-2 text-xs hover:bg-muted" onClick={() => onEraseBackground(undefined, eraseCorner)}>Erase section</button></div><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button></div></>}
+    {o.type === "image" && <><div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button className="flex-1 rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={() => onEraseBackground(eraseColor)}>Erase chosen colour</button></div><div className="flex gap-1"><select className="field flex-1 text-xs" value={eraseCorner} onChange={(e) => setEraseCorner(e.target.value as typeof eraseCorner)}><option value="top-left">Top-left section</option><option value="top-right">Top-right section</option><option value="bottom-left">Bottom-left section</option><option value="bottom-right">Bottom-right section</option></select><button className="rounded-md border border-border px-2 text-xs hover:bg-muted" onClick={() => onEraseBackground(undefined, eraseCorner)}>Erase section</button></div><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
     {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => { const depth = e.target.checked ? 10 : 0; set({ text3dDepth: depth, shadow: e.target.checked ? new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: depth, offsetY: depth }) : null }); }} /> 3D text</label>{Number(o.text3dDepth ?? 0) > 0 && <Slider label="3D depth" value={Number(o.text3dDepth)} min={1} max={40} onChange={(v) => set({ text3dDepth: v, shadow: new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: v, offsetY: v }) })} />}<label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
