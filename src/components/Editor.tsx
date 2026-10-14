@@ -459,7 +459,7 @@ export function Editor({ id }: { id: string }) {
             ))}
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
-          <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-4">
+          <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-hidden scroll-smooth p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
@@ -556,7 +556,7 @@ function ShapeIcon({ k }: { k: string }) {
 }
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="mb-0 min-w-[220px]">
+    <div className="mb-0 min-w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] shrink-0 snap-start md:min-w-[240px] md:max-w-[280px]">
       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
       <div className="space-y-2">{children}</div>
     </div>
@@ -667,8 +667,8 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
   };
 
   return (
-    <div className="flex min-w-max items-start gap-6">
-      <div className="grid min-w-[220px] grid-cols-6 gap-1">
+    <div className="flex min-w-max items-start gap-4 pb-2">
+      <div className="grid min-w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] shrink-0 snap-start grid-cols-6 gap-1 md:min-w-[240px] md:max-w-[280px]">
         <IconBtn label="Duplicate" onClick={actions.dup}><Copy /></IconBtn>
         <IconBtn label="Bring forward" onClick={() => actions.order("up")}><ArrowUp /></IconBtn>
         <IconBtn label="Send backward" onClick={() => actions.order("down")}><ArrowDown /></IconBtn>
