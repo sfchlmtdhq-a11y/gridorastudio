@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { AuthGate } from "../components/AuthGate";
 
 function NotFoundComponent() {
   return (
@@ -82,7 +83,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "description", content: "Blank-canvas graphic design editor." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {
@@ -121,7 +121,9 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      <AuthGate>
+        <Outlet />
+      </AuthGate>
     </QueryClientProvider>
   );
 }

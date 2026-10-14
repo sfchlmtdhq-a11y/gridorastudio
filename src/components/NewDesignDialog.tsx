@@ -27,8 +27,8 @@ export function NewDesignDialog({
   }, [open, initial]);
 
   if (!open) return null;
-  const create = () => {
-    const p = createProject({
+  const create = async () => {
+    const p = await createProject({
       name: name.trim() || "Untitled design",
       width: Math.min(5000, Math.max(50, w || 1080)),
       height: Math.min(5000, Math.max(50, h || 1080)),

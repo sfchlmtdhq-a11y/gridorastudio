@@ -1,47 +1,139 @@
+import { requireSupabase, requireUser, STORAGE_BUCKET } from "./supabase";
+
 export type Project = {
   id: string;
   name: string;
   width: number;
   height: number;
-  background: string; // "" = transparent
+  background: string;
   json?: unknown;
   thumb?: string;
+  thumbPath?: string;
   createdAt: number;
   updatedAt: number;
 };
 
-const KEY = "gridora.projects.v1";
+type ProjectRow = {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  background: string;
+  canvas_json: unknown;
+  thumbnail_path: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
-function read(): Project[] {
-  if (typeof window === "undefined") return [];
-  try {
-    return JSON.parse(localStorage.getItem(KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
-function write(list: Project[]) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(list));
-    return true;
-  } catch {
-    return false;
-  }
+function publicAssetUrl(path: string | null) {
+  if (!path) return undefined;
+  return requireSupabase().storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
-export const listProjects = () => read().sort((a, b) => b.updatedAt - a.updatedAt);
-export const getProject = (id: string) => read().find((p) => p.id === id);
-export function saveProject(p: Project) {
-  const list = read().filter((x) => x.id !== p.id);
-  list.push(p);
-  return write(list);
+function fromRow(row: ProjectRow): Project {
+  const project: Project = {
+    id: row.id,
+    name: row.name,
+    width: row.width,
+    height: row.height,
+    background: row.background,
+    createdAt: new Date(row.created_at).getTime(),
+    updatedAt: new Date(row.updated_at).getTime(),
+  };
+  if (row.canvas_json !== null) project.json = row.canvas_json;
+  if (row.thumbnail_path) {
+    project.thumbPath = row.thumbnail_path;
+    project.thumb = publicAssetUrl(row.thumbnail_path)!;
+  }
+  return project;
 }
-export const deleteProject = (id: string) => write(read().filter((p) => p.id !== id));
-export function createProject(o: { name: string; width: number; height: number; background: string }) {
-  const now = Date.now();
-  const p: Project = { id: Math.random().toString(36).slice(2, 10), ...o, createdAt: now, updatedAt: now };
-  saveProject(p);
-  return p;
+
+export async function listProjects(): Promise<Project[]> {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client
+    .from("projects")
+    .select("id,name,width,height,background,canvas_json,thumbnail_path,created_at,updated_at")
+    .eq("user_id", user.id)
+    .order("updated_at", { ascending: false });
+  if (error) throw error;
+  return (data as ProjectRow[]).map(fromRow);
+}
+
+export async function getProject(id: string): Promise<Project | undefined> {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client
+    .from("projects")
+    .select("id,name,width,height,background,canvas_json,thumbnail_path,created_at,updated_at")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? fromRow(data as ProjectRow) : undefined;
+}
+
+function dataUrlToBlob(dataUrl: string) {
+  const [header = "data:image/png;base64", encoded = ""] = dataUrl.split(",");
+  const mime = header.match(/data:(.*?);base64/)?.[1] || "image/png";
+  const binary = atob(encoded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new Blob([bytes], { type: mime });
+}
+
+async function saveThumbnail(project: Project, userId: string) {
+  if (!project.thumb?.startsWith("data:")) return project.thumbPath ?? null;
+  const path = `${userId}/${project.id}/thumbnail.png`;
+  const { error } = await requireSupabase().storage.from(STORAGE_BUCKET).upload(path, dataUrlToBlob(project.thumb), {
+    upsert: true,
+    contentType: "image/png",
+    cacheControl: "31536000",
+  });
+  if (error) throw error;
+  return path;
+}
+
+export async function saveProject(project: Project): Promise<Project> {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const thumbnailPath = await saveThumbnail(project, user.id);
+  const { data, error } = await client
+    .from("projects")
+    .upsert({
+      id: project.id,
+      user_id: user.id,
+      name: project.name,
+      width: project.width,
+      height: project.height,
+      background: project.background,
+      canvas_json: project.json ?? null,
+      thumbnail_path: thumbnailPath,
+    })
+    .select("id,name,width,height,background,canvas_json,thumbnail_path,created_at,updated_at")
+    .single();
+  if (error) throw error;
+  return fromRow(data as ProjectRow);
+}
+
+export async function createProject(o: { name: string; width: number; height: number; background: string }) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client
+    .from("projects")
+    .insert({ user_id: user.id, ...o })
+    .select("id,name,width,height,background,canvas_json,thumbnail_path,created_at,updated_at")
+    .single();
+  if (error) throw error;
+  return fromRow(data as ProjectRow);
+}
+
+export async function deleteProject(id: string) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const project = await getProject(id);
+  const { error } = await client.from("projects").delete().eq("id", id).eq("user_id", user.id);
+  if (error) throw error;
+  if (project?.thumbPath) await client.storage.from(STORAGE_BUCKET).remove([project.thumbPath]);
 }
 
 export const SIZE_PRESETS = [

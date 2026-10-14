@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, saveProject, type Project } from "@/lib/projects";
+import { uploadDesignAsset } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { FontPicker } from "./FontPicker";
 import { DEFAULT_ADJUSTMENTS, installDesignAdjustments, type DesignAdjustments } from "@/lib/design-adjustments";
@@ -76,21 +77,27 @@ export function Editor({ id }: { id: string }) {
     applyZoom(z);
   }, [applyZoom]);
 
-  const persist = useCallback(() => {
+  const persist = useCallback(async () => {
     const c = fc.current, p = proj.current;
     if (!c || !p) return;
     const thumb = c.toDataURL({ format: "png", multiplier: 320 / Math.max(W(), H()) / zoomRef.current });
     const bg = c.backgroundColor;
     const next: Project = { ...p, background: typeof bg === "string" ? bg : p.background, json: c.toObject(PROPS), thumb, updatedAt: Date.now() };
     proj.current = next;
-    if (!saveProject(next)) { const { thumb: omittedThumb, ...withoutThumb } = next; void omittedThumb; saveProject(withoutThumb); }
-    setSaved(true);
+    try {
+      const savedProject = await saveProject(next);
+      proj.current = savedProject;
+      setSaved(true);
+    } catch (error) {
+      console.error(error);
+      setSaved(false);
+    }
   }, []);
 
   const scheduleSave = useCallback(() => {
     setSaved(false);
     clearTimeout(timers.current.save);
-    timers.current.save = window.setTimeout(persist, 800);
+    timers.current.save = window.setTimeout(() => { void persist(); }, 800);
   }, [persist]);
 
   const snapshot = useCallback(() => {
@@ -134,11 +141,11 @@ export function Editor({ id }: { id: string }) {
 
   // init
   useEffect(() => {
-    const p = getProject(id);
-    if (!p) { setMissing(true); return; }
-    proj.current = p;
     let disposed = false;
     (async () => {
+      const p = await getProject(id);
+      if (!p) { setMissing(true); return; }
+      proj.current = p;
       const f = await import("fabric");
       if (disposed || !canvasEl.current) return;
       fab.current = f;
@@ -167,7 +174,7 @@ export function Editor({ id }: { id: string }) {
     return () => {
       disposed = true;
       clearTimeout(timers.current.save);
-      if (fc.current) { persist(); fc.current.dispose(); fc.current = null; }
+      if (fc.current) { void persist(); fc.current.dispose(); fc.current = null; }
     };
   }, [id, fit, snapshot, scheduleSave, persist]);
 
@@ -232,17 +239,16 @@ export function Editor({ id }: { id: string }) {
 
   const onFile = (file?: File) => {
     if (!file) return;
-    const r = new FileReader();
-    r.onload = async () => {
+    void (async () => {
       const f = fab.current;
       if (!f) return;
-      const img = await f.FabricImage.fromURL(r.result as string);
+      const url = await uploadDesignAsset(file, proj.current?.id);
+      const img = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
       img.set({ name: "Image" });
       const max = Math.min(W(), H()) * 0.8;
       if (img.width > max || img.height > max) img.scale(max / Math.max(img.width, img.height));
       add(img);
-    };
-    r.readAsDataURL(file);
+    })().catch(console.error);
   };
 
   const del = () => {

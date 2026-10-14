@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Pencil, Clock, LayoutGrid } from "lucide-react";
+import { Plus, Trash2, Pencil, Clock, LayoutGrid, LogOut } from "lucide-react";
 import { NewDesignDialog } from "@/components/NewDesignDialog";
 import { Logo } from "@/components/Logo";
 import { SIZE_PRESETS, deleteProject, listProjects, saveProject, type Project } from "@/lib/projects";
+import { requireSupabase } from "@/lib/supabase";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -35,8 +36,10 @@ function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [open, setOpen] = useState(false);
   const [initial, setInitial] = useState<{ w: number; h: number }>();
-  const refresh = () => setProjects(listProjects());
-  useEffect(refresh, []);
+  const refresh = async () => {
+    try { setProjects(await listProjects()); } catch (error) { console.error(error); }
+  };
+  useEffect(() => { void refresh(); }, []);
   const recent = projects.slice(0, 4);
   const openNew = (s?: { w: number; h: number }) => {
     setInitial(s);
@@ -48,9 +51,14 @@ function Dashboard() {
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6">
           <Logo />
-          <button onClick={() => openNew()} className="hidden items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground sm:inline-flex">
-            <Plus className="h-4 w-4" /> New design
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => openNew()} className="hidden items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground sm:inline-flex">
+              <Plus className="h-4 w-4" /> New design
+            </button>
+            <button aria-label="Sign out" title="Sign out" onClick={() => { void requireSupabase().auth.signOut(); }} className="rounded-lg border border-border p-2 text-muted-foreground hover:bg-muted">
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -120,10 +128,10 @@ function Dashboard() {
                     <div className="flex shrink-0">
                       <button aria-label="Rename" className="rounded p-1.5 hover:bg-muted" onClick={() => {
                         const n = prompt("Rename design", p.name);
-                        if (n) { saveProject({ ...p, name: n }); refresh(); }
+                        if (n) { void saveProject({ ...p, name: n }).then(refresh).catch(console.error); }
                       }}><Pencil className="h-4 w-4" /></button>
                       <button aria-label="Delete" className="rounded p-1.5 text-destructive hover:bg-muted" onClick={() => {
-                        if (confirm(`Delete "${p.name}"?`)) { deleteProject(p.id); refresh(); }
+                        if (confirm(`Delete "${p.name}"?`)) { void deleteProject(p.id).then(refresh).catch(console.error); }
                       }}><Trash2 className="h-4 w-4" /></button>
                     </div>
                   </div>
