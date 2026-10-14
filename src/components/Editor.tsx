@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type MouseEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
@@ -58,6 +58,9 @@ export function Editor({ id }: { id: string }) {
   const [saved, setSaved] = useState(true);
   const [adding, setAdding] = useState(false);
   const [transparentOpen, setTransparentOpen] = useState(false);
+  const [saveHomeOpen, setSaveHomeOpen] = useState(false);
+  const [pendingImage, setPendingImage] = useState<{ file: File; url: string; target: "element" | "background"; width: number; height: number } | null>(null);
+  const [fitImportedImage, setFitImportedImage] = useState(true);
 
   const W = () => proj.current?.width ?? 1;
   const H = () => proj.current?.height ?? 1;
@@ -247,33 +250,29 @@ export function Editor({ id }: { id: string }) {
     add(o);
   };
 
-  const onFile = (file?: File) => {
+  const previewImage = (file: File | undefined, target: "element" | "background") => {
     if (!file) return;
-    void (async () => {
-      const f = fab.current;
-      if (!f) return;
-      const url = await uploadDesignAsset(file, proj.current?.id);
-      const img = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-      img.set({ name: "Image" });
-      const max = Math.min(W(), H()) * 0.8;
-      if (img.width > max || img.height > max) img.scale(max / Math.max(img.width, img.height));
-      add(img);
-    })().catch(console.error);
+    const url = URL.createObjectURL(file), image = new Image();
+    image.onload = () => { setPendingImage({ file, url, target, width: image.naturalWidth, height: image.naturalHeight }); setFitImportedImage(image.naturalWidth > W() || image.naturalHeight > H()); };
+    image.src = url;
   };
-  const onBackgroundFile = (file?: File) => {
-    if (!file) return;
-    void (async () => {
-      const c = fc.current, f = fab.current;
-      if (!c || !f) return;
-      const url = await uploadDesignAsset(file, proj.current?.id);
-      const img = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-      const scale = Math.max(W() / Math.max(1, img.width), H() / Math.max(1, img.height));
+  const onFile = (file?: File) => previewImage(file, "element");
+  const onBackgroundFile = (file?: File) => previewImage(file, "background");
+  const importPendingImage = async () => {
+    const pending = pendingImage, f = fab.current, c = fc.current;
+    if (!pending || !f || !c) return;
+    const url = await uploadDesignAsset(pending.file, proj.current?.id);
+    const img = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    if (pending.target === "element") {
+      img.set({ name: "Image" });
+      if (fitImportedImage) { const max = Math.min(W(), H()) * 0.8; if (img.width > max || img.height > max) img.scale(max / Math.max(img.width, img.height)); }
+      add(img);
+    } else {
+      const scale = fitImportedImage ? Math.max(W() / Math.max(1, img.width), H() / Math.max(1, img.height)) : 1;
       img.set({ left: 0, top: 0, originX: "left", originY: "top", scaleX: scale, scaleY: scale });
-      c.backgroundColor = "";
-      c.backgroundImage = img;
-      c.requestRenderAll();
-      commit();
-    })().catch(console.error);
+      c.backgroundColor = ""; c.backgroundImage = img; c.requestRenderAll(); commit();
+    }
+    URL.revokeObjectURL(pending.url); setPendingImage(null);
   };
   const eraseImageBackground = async () => {
     const c = fc.current, f = fab.current, old = active();
@@ -297,6 +296,16 @@ export function Editor({ id }: { id: string }) {
     const next = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     next.set({ left: old.left, top: old.top, scaleX: old.scaleX, scaleY: old.scaleY, angle: old.angle, flipX: old.flipX, flipY: old.flipY, originX: old.originX, originY: old.originY, name: old.name });
     c.remove(old); c.add(next); c.setActiveObject(next); c.requestRenderAll(); commit();
+  };
+  const maskImage = (shape: "square" | "circle" | "rounded" | "triangle") => {
+    const c = fc.current, f = fab.current, o = active();
+    if (!c || !f || !o || o.type !== "image") return;
+    const w = o.width ?? 1, h = o.height ?? 1;
+    if (shape === "square") o.clipPath = undefined;
+    if (shape === "circle") o.clipPath = new f.Circle({ radius: Math.min(w, h) / 2, originX: "center", originY: "center" });
+    if (shape === "rounded") o.clipPath = new f.Rect({ width: w, height: h, rx: Math.min(w, h) * 0.18, ry: Math.min(w, h) * 0.18, originX: "center", originY: "center" });
+    if (shape === "triangle") o.clipPath = new f.Triangle({ width: w, height: h, originX: "center", originY: "center" });
+    o.setCoords(); c.requestRenderAll(); commit();
   };
 
   const del = () => {
@@ -437,12 +446,15 @@ export function Editor({ id }: { id: string }) {
   ];
   const tools = adding ? addTools : mainTools;
   const backTools = () => { setAdding(false); setPanelOpen(false); };
+  const requestHome = (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setSaveHomeOpen(true); };
+  const saveCloudAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
+  const exportAndHome = async (kind: "png" | "jpg" | "pdf") => { await exportAs(kind); setSaveHomeOpen(false); nav({ to: "/" }); };
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden">
       {/* top bar */}
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-card px-2 sm:px-4">
-        <Logo compact />
+        <Logo compact onClick={requestHome} />
         <input
           className="min-w-0 max-w-[40vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs"
           defaultValue={proj.current?.name}
@@ -528,7 +540,7 @@ export function Editor({ id }: { id: string }) {
           </div>
           <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
-            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={() => { void eraseImageBackground(); }} />}
+            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={() => { void eraseImageBackground(); }} onMaskImage={maskImage} />}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
               <div className="space-y-1">
@@ -588,6 +600,21 @@ export function Editor({ id }: { id: string }) {
       </div>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
       <input ref={backgroundFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onBackgroundFile(e.target.files?.[0]); e.target.value = ""; }} />
+      <AlertDialog open={!!pendingImage} onOpenChange={(open) => { if (!open && pendingImage) { URL.revokeObjectURL(pendingImage.url); setPendingImage(null); } }}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md rounded-lg">
+          <AlertDialogHeader><AlertDialogTitle>Preview image before importing</AlertDialogTitle><AlertDialogDescription>{pendingImage ? `${pendingImage.width} × ${pendingImage.height}px` : ""}</AlertDialogDescription></AlertDialogHeader>
+          {pendingImage && <img src={pendingImage.url} alt="Image preview" className="max-h-52 w-full rounded-lg border border-border object-contain" />}
+          {pendingImage && (pendingImage.width > W() || pendingImage.height > H()) && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={fitImportedImage} onChange={(e) => setFitImportedImage(e.target.checked)} /> Fit image to the canvas size</label>}
+          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { void importPendingImage(); }}>Import image</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={saveHomeOpen} onOpenChange={setSaveHomeOpen}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md rounded-lg">
+          <AlertDialogHeader><AlertDialogTitle>Save this project before leaving?</AlertDialogTitle><AlertDialogDescription>Save it to the cloud to keep editing it later, or export a copy to your device. Leaving without saving may lose your latest changes.</AlertDialogDescription></AlertDialogHeader>
+          <div className="grid gap-2 sm:grid-cols-2"><Button onClick={() => { void saveCloudAndHome(); }}>Save to cloud</Button><Button variant="outline" onClick={() => { void exportAndHome("png"); }}>Export PNG</Button><Button variant="outline" onClick={() => { void exportAndHome("jpg"); }}>Export JPG</Button><Button variant="outline" onClick={() => { void exportAndHome("pdf"); }}>Export PDF</Button></div>
+          <button className="text-center text-xs text-destructive underline" onClick={() => { setSaveHomeOpen(false); nav({ to: "/" }); }}>Leave without saving</button>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={transparentOpen} onOpenChange={setTransparentOpen}>
         <AlertDialogContent className="w-[calc(100%-2rem)] rounded-lg">
           <AlertDialogHeader><AlertDialogTitle>Make the background transparent?</AlertDialogTitle><AlertDialogDescription>This removes the canvas background color or gradient. Your images, text and other layers stay unchanged.</AlertDialogDescription></AlertDialogHeader>
@@ -890,7 +917,7 @@ function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fa
 }
 
 type EditMode = "textTools" | "position" | "fill" | "stroke" | "effects";
-function ContextualTools({ o, f, mode, commit, onEraseBackground }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: () => void }) {
+function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: () => void; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle") => void }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o.type === "textbox" || o.type === "i-text" || o.type === "text";
   const fillAlpha = alphaOf(o.fill), strokeAlpha = alphaOf(o.stroke);
@@ -925,10 +952,10 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground }: { o: Obj; f:
     {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} />}
   </Section>;
   return <Section title="Effects">
-    {o.type === "image" && <button className="w-full rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={onEraseBackground}>Erase image background</button>}
+    {o.type === "image" && <><button className="w-full rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={onEraseBackground}>Erase image background</button><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button></div></>}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
-    {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => set({ text3dDepth: e.target.checked ? 10 : 0 })} /> 3D text</label><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
+    {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => { const depth = e.target.checked ? 10 : 0; set({ text3dDepth: depth, shadow: e.target.checked ? new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: depth, offsetY: depth }) : null }); }} /> 3D text</label>{Number(o.text3dDepth ?? 0) > 0 && <Slider label="3D depth" value={Number(o.text3dDepth)} min={1} max={40} onChange={(v) => set({ text3dDepth: v, shadow: new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: v, offsetY: v }) })} />}<label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
   </Section>;
 }
 

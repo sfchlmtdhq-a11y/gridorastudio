@@ -1,8 +1,9 @@
 import { Link } from "@tanstack/react-router";
+import type { MouseEvent } from "react";
 
-export function Logo({ compact }: { compact?: boolean }) {
+export function Logo({ compact, onClick }: { compact?: boolean; onClick?: (event: MouseEvent<HTMLAnchorElement>) => void }) {
   return (
-    <Link to="/" className="flex items-center gap-2">
+    <Link to="/" onClick={onClick} className="flex items-center gap-2">
       <span className="grid h-8 w-8 grid-cols-2 gap-0.5 rounded-lg bg-primary p-1.5">
         <span className="rounded-[2px] bg-primary-foreground" />
         <span className="rounded-[2px] bg-primary-foreground/40" />
