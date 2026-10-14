@@ -185,11 +185,15 @@ export function Editor({ id }: { id: string }) {
         let guide: { axis: "x" | "y"; value: number } | null = null;
         if (Math.abs(centerX - cx) < tolerance) { target.left = cx - (target.getScaledWidth?.() ?? 0) / 2; guide = { axis: "x", value: cx }; }
         else if (Math.abs(left - 0) < tolerance) { target.left = 0; guide = { axis: "x", value: 0 }; }
+        else if (Math.abs((left + (target.getScaledWidth?.() ?? 0)) - W()) < tolerance) { target.left = W() - (target.getScaledWidth?.() ?? 0); guide = { axis: "x", value: W() }; }
         else if (Math.abs(centerY - cy) < tolerance) { target.top = cy - (target.getScaledHeight?.() ?? 0) / 2; guide = { axis: "y", value: cy }; }
         else if (Math.abs(top - 0) < tolerance) { target.top = 0; guide = { axis: "y", value: 0 }; }
+        else if (Math.abs((top + (target.getScaledHeight?.() ?? 0)) - H()) < tolerance) { target.top = H() - (target.getScaledHeight?.() ?? 0); guide = { axis: "y", value: H() }; }
         const textObjects = c.getObjects().filter((x: Obj) => x !== target && ["textbox", "i-text", "text"].includes(x.type));
         for (const other of textObjects) {
           if (Math.abs((target.top ?? 0) - (other.top ?? 0)) < tolerance) { target.top = other.top; guide = { axis: "y", value: other.top ?? 0 }; break; }
+          if (Math.abs((target.left ?? 0) - (other.left ?? 0)) < tolerance) { target.left = other.left; guide = { axis: "x", value: other.left ?? 0 }; break; }
+          if (Math.abs(centerX - ((other.left ?? 0) + (other.getScaledWidth?.() ?? 0) / 2)) < tolerance) { target.left = (other.left ?? 0) + (other.getScaledWidth?.() ?? 0) / 2 - (target.getScaledWidth?.() ?? 0) / 2; guide = { axis: "x", value: (other.left ?? 0) + (other.getScaledWidth?.() ?? 0) / 2 }; break; }
         }
         target.setCoords(); setAlignmentGuide(guide); if (guide) window.setTimeout(() => setAlignmentGuide(null), 200);
       });
