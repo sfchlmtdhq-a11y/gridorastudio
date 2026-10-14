@@ -144,7 +144,7 @@ function Dashboard() {
         </section>
       </main>
       <footer className="border-t border-border px-4 py-8 text-center text-sm text-muted-foreground sm:px-6">
-        Projects made by <span className="font-semibold text-foreground">SFCH Limited</span><br />© 2026
+        Made by <span className="font-semibold text-foreground">SFCH Limited</span><br />© 2026
       </footer>
       <button onClick={() => openNew()} aria-label="Create New Design" className="fixed bottom-5 right-5 rounded-full bg-primary p-4 text-primary-foreground shadow-glow sm:hidden"><Plus className="h-6 w-6" /></button>
       <NewDesignDialog open={open} onClose={() => setOpen(false)} {...(initial ? { initial } : {})} />
