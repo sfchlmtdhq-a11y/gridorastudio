@@ -49,6 +49,10 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-ring-offset-background: var(--background);
+  --color-font-lime: var(--font-lime);
+  --color-font-rose: var(--font-rose);
+  --color-font-aqua: var(--font-aqua);
+  --color-font-gold: var(--font-gold);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -170,8 +174,3 @@ body { font-family: var(--font-sans); }
   padding: 0.5rem 0.75rem; font-size: 0.875rem; color: var(--foreground); outline: none;
 }
 .field:focus { border-color: var(--ring); }
-.font-sample { position: relative; height: 80px; min-width: 0; flex-direction: column; gap: 2px; background: color-mix(in oklab, var(--sample-tone) 12%, var(--card)); color: var(--sample-tone); border: 1px solid color-mix(in oklab, var(--sample-tone) 25%, var(--border)); }
-.font-tone-lime { --sample-tone: var(--font-lime); }
-.font-tone-rose { --sample-tone: var(--font-rose); }
-.font-tone-aqua { --sample-tone: var(--font-aqua); }
-.font-tone-gold { --sample-tone: var(--font-gold); }

@@ -16,9 +16,11 @@ export function installDesignAdjustments(canvas: any) {
   };
   const buffer = document.createElement("canvas");
   canvas.renderCanvas = (ctx: CanvasRenderingContext2D, objects: unknown[]) => {
-    render(ctx, objects);
     const a: DesignAdjustments = canvas.designAdjustments;
-    if (!Object.values(a).some(Boolean)) return;
+    if (!Object.values(a).some(Boolean)) { render(ctx, objects); return; }
+    const skipControls = canvas.skipControlsDrawing;
+    canvas.skipControlsDrawing = true;
+    try { render(ctx, objects); } finally { canvas.skipControlsDrawing = skipControls; }
     buffer.width = ctx.canvas.width;
     buffer.height = ctx.canvas.height;
     const copy = buffer.getContext("2d");
@@ -35,9 +37,10 @@ export function installDesignAdjustments(canvas: any) {
       const pixels = ctx.getImageData(0, 0, buffer.width, buffer.height);
       for (let i = 0; i < pixels.data.length; i += 4) {
         const noise = (((i * 16807 % 127) / 126) - 0.5) * a.grain * 1.5;
-        for (let c = 0; c < 3; c++) pixels.data[i + c] += noise;
+        for (let c = 0; c < 3; c++) pixels.data[i + c] = (pixels.data[i + c] ?? 0) + noise;
       }
       ctx.putImageData(pixels, 0, 0);
     }
+    if (!skipControls) canvas.drawControls(ctx);
   };
 }

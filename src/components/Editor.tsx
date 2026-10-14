@@ -83,7 +83,7 @@ export function Editor({ id }: { id: string }) {
     const bg = c.backgroundColor;
     const next: Project = { ...p, background: typeof bg === "string" ? bg : p.background, json: c.toObject(PROPS), thumb, updatedAt: Date.now() };
     proj.current = next;
-    if (!saveProject(next)) saveProject({ ...next, thumb: undefined });
+    if (!saveProject(next)) { const { thumb: omittedThumb, ...withoutThumb } = next; void omittedThumb; saveProject(withoutThumb); }
     setSaved(true);
   }, []);
 
@@ -125,11 +125,11 @@ export function Editor({ id }: { id: string }) {
 
   const undo = useCallback(() => {
     const h = hist.current;
-    if (h.i > 0) { h.i--; restore(h.stack[h.i]); }
+    if (h.i > 0) { h.i--; const s = h.stack[h.i]; if (s) restore(s); }
   }, [restore]);
   const redo = useCallback(() => {
     const h = hist.current;
-    if (h.i < h.stack.length - 1) { h.i++; restore(h.stack[h.i]); }
+    if (h.i < h.stack.length - 1) { h.i++; const s = h.stack[h.i]; if (s) restore(s); }
   }, [restore]);
 
   // init
@@ -210,7 +210,8 @@ export function Editor({ id }: { id: string }) {
         const r = kind === "star" && i % 2 ? s / 4.5 : s / 2;
         pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
       }
-      o = new f.Polygon(pts, { fill, name: kind[0].toUpperCase() + kind.slice(1) });
+      o = new f.Polygon(pts, { fill });
+      o.set({ name: kind.charAt(0).toUpperCase() + kind.slice(1) });
     }
     add(o);
   };
@@ -222,8 +223,9 @@ export function Editor({ id }: { id: string }) {
   };
   const addIcon = (n: string) => {
     const f = fab.current;
-    if (!f) return;
-    const o = new f.Path(ICONS[n], { fill: "#111111", name: "Icon " + n });
+    const path = ICONS[n];
+    if (!f || !path) return;
+    const o = new f.Path(path, { fill: "#111111", name: "Icon " + n });
     o.scaleToWidth(Math.min(W(), H()) * 0.2);
     add(o);
   };
@@ -543,7 +545,7 @@ function ShapeIcon({ k }: { k: string }) {
   if (k === "triangle") return <svg viewBox="0 0 24 24" className={c}><path d="M12 3l10 18H2z" /></svg>;
   if (k === "pentagon") return <svg viewBox="0 0 24 24" className={c}><path d="M12 2l10 7-4 12H6L2 9z" /></svg>;
   if (k === "hexagon") return <svg viewBox="0 0 24 24" className={c}><path d="M12 2l9 5v10l-9 5-9-5V7z" /></svg>;
-  if (k === "star") return <svg viewBox="0 0 24 24" className={c}><path d={ICONS.Star} /></svg>;
+  if (k === "star") return <svg viewBox="0 0 24 24" className={c}><path d={ICONS['Star']} /></svg>;
   return <svg viewBox="0 0 24 24" className="h-7 w-7 stroke-primary" strokeWidth="3"><path d="M2 12h20" /></svg>;
 }
 function Section({ title, children }: { title: string; children: ReactNode }) {
