@@ -31,7 +31,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (session === undefined) return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Loading Gridora Studio…</div>;
   const client = supabase;
-  if (!client) return <div className="flex min-h-screen items-center justify-center p-6 text-center">Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to connect Gridora Studio.</div>;
+  if (!client) return <div className="flex min-h-screen items-center justify-center p-6 text-center">Gridora Studio is not configured yet. Please try again later.</div>;
   if (session) return <>{children}</>;
 
   const submit = async (event: FormEvent) => {
@@ -51,7 +51,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <form onSubmit={submit} className="w-full max-w-md rounded-3xl border border-border bg-card p-7 shadow-xl">
         <Logo />
         <h1 className="mt-8 font-display text-3xl font-bold">{mode === "signIn" ? "Sign in to Gridora Studio" : "Create your Gridora account"}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Your designs are securely stored in your Supabase account.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Create, save, and return to your designs from any device.</p>
         <label className="mt-7 block text-sm font-medium">Email<input required type="email" className="field mt-1" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
         <label className="mt-4 block text-sm font-medium">Password<input required minLength={6} type="password" className="field mt-1" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
         {message && <p className="mt-4 text-sm text-muted-foreground">{message}</p>}

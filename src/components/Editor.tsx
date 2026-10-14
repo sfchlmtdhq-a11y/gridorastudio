@@ -203,6 +203,7 @@ export function Editor({ id }: { id: string }) {
         if (tapRef.current.target === target) tapRef.current.count += 1;
         else tapRef.current = { target, count: 1 };
         if (tapRef.current.count < 3) closeVirtualKeyboard();
+        if (tapRef.current.count === 1 && ["textbox", "i-text", "text"].includes(target.type)) { setPanelOpen(false); target.enterEditing?.(); target.selectAll?.(); }
         setPanelOpen(tapRef.current.count >= 2);
         if (tapRef.current.count >= 2) setTab("props");
         force();
@@ -496,7 +497,7 @@ export function Editor({ id }: { id: string }) {
   const tools = adding ? addTools : mainTools;
   const backTools = () => { setAdding(false); setPanelOpen(false); };
   const requestHome = (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setSaveHomeOpen(true); };
-  const saveCloudAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
+  const saveProjectAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
   const exportAndHome = async (kind: "png" | "jpg" | "pdf") => { await exportAs(kind); setSaveHomeOpen(false); nav({ to: "/" }); };
 
   return (
@@ -662,8 +663,8 @@ export function Editor({ id }: { id: string }) {
       </AlertDialog>
       <AlertDialog open={saveHomeOpen} onOpenChange={setSaveHomeOpen}>
         <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md rounded-lg">
-          <AlertDialogHeader><AlertDialogTitle>Save this project before leaving?</AlertDialogTitle><AlertDialogDescription>Save it to the cloud to keep editing it later, or export a copy to your device. Leaving without saving may lose your latest changes.</AlertDialogDescription></AlertDialogHeader>
-          <div className="grid gap-2 sm:grid-cols-2"><Button onClick={() => { void saveCloudAndHome(); }}>Save to cloud</Button><Button variant="outline" onClick={() => { void exportAndHome("png"); }}>Export PNG</Button><Button variant="outline" onClick={() => { void exportAndHome("jpg"); }}>Export JPG</Button><Button variant="outline" onClick={() => { void exportAndHome("pdf"); }}>Export PDF</Button></div>
+          <AlertDialogHeader><AlertDialogTitle>Save this project before leaving?</AlertDialogTitle><AlertDialogDescription>Save it to your Gridora library to keep editing it later, or export a copy to your device. Leaving without saving may lose your latest changes.</AlertDialogDescription></AlertDialogHeader>
+          <div className="grid gap-2 sm:grid-cols-2"><Button onClick={() => { void saveProjectAndHome(); }}>Save project</Button><Button variant="outline" onClick={() => { void exportAndHome("png"); }}>Export PNG</Button><Button variant="outline" onClick={() => { void exportAndHome("jpg"); }}>Export JPG</Button><Button variant="outline" onClick={() => { void exportAndHome("pdf"); }}>Export PDF</Button></div>
           <button className="text-center text-xs text-destructive underline" onClick={() => { void deleteProject(id).finally(() => { setSaveHomeOpen(false); nav({ to: "/" }); }); }}>Discard project without saving</button>
         </AlertDialogContent>
       </AlertDialog>
