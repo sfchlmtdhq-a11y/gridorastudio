@@ -203,7 +203,7 @@ export function Editor({ id }: { id: string }) {
         if (tapRef.current.target === target) tapRef.current.count += 1;
         else tapRef.current = { target, count: 1 };
         if (tapRef.current.count < 3) closeVirtualKeyboard();
-        if (tapRef.current.count === 1 && ["textbox", "i-text", "text"].includes(target.type)) { setPanelOpen(false); target.enterEditing?.(); target.selectAll?.(); }
+        if (tapRef.current.count === 1 && ["textbox", "i-text", "text"].includes(target.type)) { setPanelOpen(false); }
         setPanelOpen(tapRef.current.count >= 2);
         if (tapRef.current.count >= 2) setTab("props");
         force();

@@ -7,7 +7,18 @@ if (!supabaseUrl || !supabaseKey) {
   console.warn("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
 }
 
-export const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+const sessionStorageAdapter = typeof window === "undefined" ? undefined : {
+  getItem: (key: string) => window.sessionStorage.getItem(key) ?? window.localStorage.getItem(key),
+  setItem: (key: string, value: string) => {
+    const remember = window.localStorage.getItem("gridora-remember-me") !== "false";
+    const target = remember ? window.localStorage : window.sessionStorage;
+    target.setItem(key, value);
+    (remember ? window.sessionStorage : window.localStorage).removeItem(key);
+  },
+  removeItem: (key: string) => { window.localStorage.removeItem(key); window.sessionStorage.removeItem(key); },
+};
+
+export const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey, { auth: { persistSession: true, storage: sessionStorageAdapter } }) : null;
 export const STORAGE_BUCKET = "design-assets";
 
 export function requireSupabase() {
