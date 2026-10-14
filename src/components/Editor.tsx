@@ -451,7 +451,7 @@ export function Editor({ id }: { id: string }) {
             onPointerMove={(e) => { const d = drag.current; if (d && wrapRef.current) { wrapRef.current.scrollLeft = d.sl - (e.clientX - d.x); wrapRef.current.scrollTop = d.st - (e.clientY - d.y); } }}
             onPointerUp={() => (drag.current = null)}
             onPointerLeave={() => (drag.current = null)}
-            className={`workspace absolute inset-0 overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(44vh+4rem)] md:bottom-[32vh]" : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
           >
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
               <div className={`checker shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
@@ -478,7 +478,7 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 h-auto max-h-[24vh] flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:max-h-[22vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 h-[44vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:h-[32vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
           <div className="flex items-center gap-1 border-b border-border p-2">
             {(["props", "layers", "bg", "edit"] as Tab[]).map((t) => (
               <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
@@ -487,7 +487,7 @@ export function Editor({ id }: { id: string }) {
             ))}
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
-          <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-hidden scroll-smooth p-4">
+          <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
