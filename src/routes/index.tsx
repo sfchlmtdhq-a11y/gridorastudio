@@ -134,7 +134,7 @@ function Dashboard() {
         </section>
       </main>
       <button onClick={() => openNew()} aria-label="Create New Design" className="fixed bottom-5 right-5 rounded-full bg-primary p-4 text-primary-foreground shadow-glow sm:hidden"><Plus className="h-6 w-6" /></button>
-      <NewDesignDialog open={open} onClose={() => setOpen(false)} initial={initial} />
+      <NewDesignDialog open={open} onClose={() => setOpen(false)} {...(initial ? { initial } : {})} />
     </div>
   );
 }

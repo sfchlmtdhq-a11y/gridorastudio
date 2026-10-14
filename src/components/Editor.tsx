@@ -3,16 +3,19 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
   Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock,
-  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical,
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, CalendarDays, Scan, RotateCcw,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, saveProject, type Project } from "@/lib/projects";
+import { Button } from "@/components/ui/button";
+import { FontPicker } from "./FontPicker";
+import { DEFAULT_ADJUSTMENTS, installDesignAdjustments, type DesignAdjustments } from "@/lib/design-adjustments";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
 
 type Fab = typeof import("fabric");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Obj = any;
 const PROPS = ["name", "selectable", "evented", "lockedLayer"];
-const FONTS = ["Manrope", "Syne", "Montserrat", "Poppins", "Oswald", "Bebas Neue", "Anton", "Playfair Display", "Roboto Slab", "Lobster", "Pacifico", "Dancing Script", "Permanent Marker", "Arial", "Georgia", "Courier New"];
 const STICKERS = ["😀", "😍", "🔥", "✨", "🎉", "❤️", "👍", "💯", "⭐", "🌟", "🎁", "🎂", "🌈", "☀️", "🌙", "⚡", "🍕", "☕", "🎵", "📸", "🚀", "💎", "👑", "🏆", "🌸", "🍀", "🦋", "🐱", "🎈", "💥", "✅", "📍"];
 const ICONS: Record<string, string> = {
   Heart: "M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z",
@@ -28,7 +31,7 @@ const ICONS: Record<string, string> = {
   Home: "M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z",
   Crown: "M2 7l5 4 5-7 5 7 5-4-2 12H4z",
 };
-type Tab = "props" | "layers" | "shapes" | "stickers" | "icons" | "bg";
+type Tab = "props" | "layers" | "shapes" | "stickers" | "icons" | "bg" | "edit";
 
 export function Editor({ id }: { id: string }) {
   const nav = useNavigate();
@@ -50,9 +53,11 @@ export function Editor({ id }: { id: string }) {
   const [hand, setHand] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [saved, setSaved] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [transparentOpen, setTransparentOpen] = useState(false);
 
-  const W = () => proj.current!.width;
-  const H = () => proj.current!.height;
+  const W = () => proj.current?.width ?? 1;
+  const H = () => proj.current?.height ?? 1;
 
   const applyZoom = useCallback((z: number) => {
     const c = fc.current;
@@ -78,7 +83,7 @@ export function Editor({ id }: { id: string }) {
     const bg = c.backgroundColor;
     const next: Project = { ...p, background: typeof bg === "string" ? bg : p.background, json: c.toObject(PROPS), thumb, updatedAt: Date.now() };
     proj.current = next;
-    if (!saveProject(next)) saveProject({ ...next, thumb: undefined });
+    if (!saveProject(next)) { const { thumb: omittedThumb, ...withoutThumb } = next; void omittedThumb; saveProject(withoutThumb); }
     setSaved(true);
   }, []);
 
@@ -120,11 +125,11 @@ export function Editor({ id }: { id: string }) {
 
   const undo = useCallback(() => {
     const h = hist.current;
-    if (h.i > 0) { h.i--; restore(h.stack[h.i]); }
+    if (h.i > 0) { h.i--; const s = h.stack[h.i]; if (s) restore(s); }
   }, [restore]);
   const redo = useCallback(() => {
     const h = hist.current;
-    if (h.i < h.stack.length - 1) { h.i++; restore(h.stack[h.i]); }
+    if (h.i < h.stack.length - 1) { h.i++; const s = h.stack[h.i]; if (s) restore(s); }
   }, [restore]);
 
   // init
@@ -138,6 +143,7 @@ export function Editor({ id }: { id: string }) {
       if (disposed || !canvasEl.current) return;
       fab.current = f;
       const c = new f.Canvas(canvasEl.current, { preserveObjectStacking: true, backgroundColor: p.background, width: p.width, height: p.height });
+      installDesignAdjustments(c);
       fc.current = c;
       if (p.json) {
         hist.current.lock = true;
@@ -150,7 +156,7 @@ export function Editor({ id }: { id: string }) {
       c.on("object:added", onChange);
       c.on("object:removed", onChange);
       c.on("text:changed", onChange);
-      const onSel = () => { force(); if (c.getActiveObject()) setTab("props"); };
+      const onSel = () => { force(); if (c.getActiveObject()) setTab(current => current === "layers" || current === "edit" ? current : "props"); };
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
       c.on("selection:cleared", () => force());
@@ -178,13 +184,15 @@ export function Editor({ id }: { id: string }) {
   };
 
   const addText = () => {
-    const f = fab.current!;
+    const f = fab.current;
+    if (!f) return;
     add(new f.Textbox("Double-click to edit", { width: W() * 0.6, fontSize: Math.round(Math.min(W(), H()) / 12), fontFamily: "Manrope", fill: "#111111", textAlign: "center", name: "Text" }));
     setPanelOpen(true);
   };
 
   const addShape = (kind: string) => {
-    const f = fab.current!;
+    const f = fab.current;
+    if (!f) return;
     const s = Math.min(W(), H()) * 0.3;
     const fill = "#c6f432";
     let o: Obj;
@@ -202,18 +210,22 @@ export function Editor({ id }: { id: string }) {
         const r = kind === "star" && i % 2 ? s / 4.5 : s / 2;
         pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
       }
-      o = new f.Polygon(pts, { fill, name: kind[0].toUpperCase() + kind.slice(1) });
+      o = new f.Polygon(pts, { fill });
+      o.set({ name: kind.charAt(0).toUpperCase() + kind.slice(1) });
     }
     add(o);
   };
 
   const addSticker = (e: string) => {
-    const f = fab.current!;
+    const f = fab.current;
+    if (!f) return;
     add(new f.FabricText(e, { fontSize: Math.min(W(), H()) / 5, name: "Sticker " + e }));
   };
   const addIcon = (n: string) => {
-    const f = fab.current!;
-    const o = new f.Path(ICONS[n], { fill: "#111111", name: "Icon " + n });
+    const f = fab.current;
+    const path = ICONS[n];
+    if (!f || !path) return;
+    const o = new f.Path(path, { fill: "#111111", name: "Icon " + n });
     o.scaleToWidth(Math.min(W(), H()) * 0.2);
     add(o);
   };
@@ -222,7 +234,8 @@ export function Editor({ id }: { id: string }) {
     if (!file) return;
     const r = new FileReader();
     r.onload = async () => {
-      const f = fab.current!;
+      const f = fab.current;
+      if (!f) return;
       const img = await f.FabricImage.fromURL(r.result as string);
       img.set({ name: "Image" });
       const max = Math.min(W(), H()) * 0.8;
@@ -310,7 +323,7 @@ export function Editor({ id }: { id: string }) {
     const url = c.toDataURL({ format: fmt, quality: 0.95, multiplier: 1 / zoomRef.current });
     c.backgroundColor = prev;
     c.renderAll();
-    const name = (proj.current!.name || "design").replace(/[^\w-]+/g, "_");
+    const name = (proj.current?.name || "design").replace(/[^\w-]+/g, "_");
     if (kind === "pdf") {
       const { jsPDF } = await import("jspdf");
       const pdf = new jsPDF({ orientation: W() > H() ? "l" : "p", unit: "px", format: [W(), H()], hotfixes: ["px_scaling"] });
@@ -339,15 +352,27 @@ export function Editor({ id }: { id: string }) {
   const objects: Obj[] = ready && fc.current ? [...fc.current.getObjects()].reverse() : [];
   const openTab = (t: Tab) => { setTab(t); setPanelOpen(true); };
 
-  const tools: { icon: ReactNode; label: string; on: () => void }[] = [
+  const addDate = () => {
+    const f = fab.current;
+    if (!f) return;
+    add(new f.Textbox(new Date().toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }), { width: W() * 0.6, fontSize: Math.round(Math.min(W(), H()) / 18), fontFamily: "Manrope", fill: "#111111", textAlign: "center", name: "Date" }));
+    setPanelOpen(true);
+  };
+  const addTools: { icon: ReactNode; label: string; on: () => void }[] = [
+    { icon: <ImagePlus />, label: "Images", on: () => fileRef.current?.click() },
     { icon: <Type />, label: "Text", on: addText },
-    { icon: <ImagePlus />, label: "Image", on: () => fileRef.current?.click() },
     { icon: <Shapes />, label: "Shapes", on: () => openTab("shapes") },
-    { icon: <Smile />, label: "Stickers", on: () => openTab("stickers") },
     { icon: <Star />, label: "Icons", on: () => openTab("icons") },
-    { icon: <PaintBucket />, label: "Canvas", on: () => { fc.current?.discardActiveObject(); fc.current?.requestRenderAll(); openTab("bg"); } },
-    { icon: <Layers />, label: "Layers", on: () => openTab("layers") },
+    { icon: <CalendarDays />, label: "Date", on: addDate },
   ];
+  const mainTools: { icon: ReactNode; label: string; on: () => void }[] = [
+    { icon: <Plus />, label: "Add", on: () => { setAdding(true); setPanelOpen(false); } },
+    { icon: <Layers />, label: "Layers", on: () => openTab("layers") },
+    { icon: <SlidersHorizontal />, label: "Edit", on: () => openTab("edit") },
+    { icon: <Scan />, label: "Transparent", on: () => setTransparentOpen(true) },
+  ];
+  const tools = adding ? addTools : mainTools;
+  const backTools = () => { setAdding(false); setPanelOpen(false); };
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden">
@@ -382,10 +407,11 @@ export function Editor({ id }: { id: string }) {
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* tool rail desktop */}
         <nav className="hidden w-20 shrink-0 flex-col gap-1 border-r border-border bg-card p-2 md:flex">
+          {adding && <Button variant="outline" size="icon" className="mx-auto mb-2 rounded-full" title="Back to tools" aria-label="Back to tools" onClick={backTools}><ArrowLeft /></Button>}
           {tools.map((t) => (
-            <button key={t.label} onClick={t.on} className="flex flex-col items-center gap-1 rounded-lg py-2 text-[11px] text-muted-foreground transition hover:bg-muted hover:text-foreground [&_svg]:h-5 [&_svg]:w-5">
+            <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-16 flex-col gap-1 px-0 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
               {t.icon}{t.label}
-            </button>
+            </Button>
           ))}
         </nav>
 
@@ -394,7 +420,7 @@ export function Editor({ id }: { id: string }) {
           <div
             ref={wrapRef}
             onWheel={onWheel}
-            onPointerDown={(e) => { if (hand) { drag.current = { x: e.clientX, y: e.clientY, sl: wrapRef.current!.scrollLeft, st: wrapRef.current!.scrollTop }; } }}
+            onPointerDown={(e) => { if (hand && wrapRef.current) { drag.current = { x: e.clientX, y: e.clientY, sl: wrapRef.current.scrollLeft, st: wrapRef.current.scrollTop }; } }}
             onPointerMove={(e) => { const d = drag.current; if (d && wrapRef.current) { wrapRef.current.scrollLeft = d.sl - (e.clientX - d.x); wrapRef.current.scrollTop = d.st - (e.clientY - d.y); } }}
             onPointerUp={() => (drag.current = null)}
             onPointerLeave={() => (drag.current = null)}
@@ -418,17 +444,18 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-16 z-40 max-h-[55vh] flex-col rounded-t-2xl border-t border-border bg-card shadow-2xl md:static md:z-auto md:flex md:max-h-none md:w-80 md:shrink-0 md:rounded-none md:border-l md:border-t-0 md:shadow-none`}>
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 max-h-[55vh] flex-col rounded-t-lg border-t border-border bg-card shadow-2xl md:static md:z-auto md:flex md:max-h-none md:w-80 md:shrink-0 md:rounded-none md:border-l md:border-t-0 md:shadow-none`}>
           <div className="flex items-center gap-1 border-b border-border p-2">
-            {(["props", "layers", "bg"] as Tab[]).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`rounded-md px-3 py-1.5 text-xs font-medium ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
-                {t === "props" ? "Properties" : t === "layers" ? "Layers" : "Canvas"}
-              </button>
+            {(["props", "layers", "bg", "edit"] as Tab[]).map((t) => (
+              <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
+                {t === "props" ? "Properties" : t === "layers" ? "Layers" : t === "edit" ? "Edit" : "Canvas"}
+              </Button>
             ))}
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            {ready && tab === "props" && (o ? <Properties o={o} f={fab.current!} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
+            {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
+            {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
               <div className="space-y-1">
                 {objects.length === 0 && <p className="text-sm text-muted-foreground">No layers yet. Add text, images or shapes.</p>}
@@ -451,7 +478,7 @@ export function Editor({ id }: { id: string }) {
                 )}
               </div>
             )}
-            {ready && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current!} proj={proj.current!} commit={commit} resize={(w, hh) => { proj.current = { ...proj.current!, width: w, height: hh }; fit(); commit(); }} />}
+            {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} />}
             {ready && tab === "shapes" && (
               <Grid>
                 {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line"].map((k) => (
@@ -474,15 +501,24 @@ export function Editor({ id }: { id: string }) {
         </aside>
 
         {/* tool rail mobile */}
-        <nav className="flex h-16 shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-card px-2 md:hidden">
+        <div className="shrink-0 border-t border-border bg-card md:hidden">
+          {adding && <div className="flex h-12 items-center gap-3 px-4"><Button variant="outline" size="icon" className="h-8 w-8 rounded-full" aria-label="Back to tools" title="Back to tools" onClick={backTools}><ArrowLeft /></Button><span className="text-xs font-semibold text-primary">Add</span></div>}
+        <nav aria-label="Design tools" className="flex h-16 items-center justify-around gap-1 px-2">
           {tools.map((t) => (
-            <button key={t.label} onClick={t.on} className="flex min-w-[56px] flex-col items-center gap-0.5 rounded-lg py-1.5 text-[10px] text-muted-foreground [&_svg]:h-5 [&_svg]:w-5">
+            <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-14 min-w-0 flex-1 flex-col gap-1 px-1 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
               {t.icon}{t.label}
-            </button>
+            </Button>
           ))}
         </nav>
+        </div>
       </div>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
+      <AlertDialog open={transparentOpen} onOpenChange={setTransparentOpen}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] rounded-lg">
+          <AlertDialogHeader><AlertDialogTitle>Make the background transparent?</AlertDialogTitle><AlertDialogDescription>This removes the canvas background color or gradient. Your images, text and other layers stay unchanged.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { if (!fc.current) return; snapshot(); fc.current.backgroundColor = ""; commit(); }}>Make transparent</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -509,7 +545,7 @@ function ShapeIcon({ k }: { k: string }) {
   if (k === "triangle") return <svg viewBox="0 0 24 24" className={c}><path d="M12 3l10 18H2z" /></svg>;
   if (k === "pentagon") return <svg viewBox="0 0 24 24" className={c}><path d="M12 2l10 7-4 12H6L2 9z" /></svg>;
   if (k === "hexagon") return <svg viewBox="0 0 24 24" className={c}><path d="M12 2l9 5v10l-9 5-9-5V7z" /></svg>;
-  if (k === "star") return <svg viewBox="0 0 24 24" className={c}><path d={ICONS.Star} /></svg>;
+  if (k === "star") return <svg viewBox="0 0 24 24" className={c}><path d={ICONS['Star']} /></svg>;
   return <svg viewBox="0 0 24 24" className="h-7 w-7 stroke-primary" strokeWidth="3"><path d="M2 12h20" /></svg>;
 }
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -575,10 +611,7 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
           {o instanceof f.Textbox && (
             <textarea className="field min-h-[60px]" value={o.text} onChange={(e) => set({ text: e.target.value })} />
           )}
-          <select className="field" value={o.fontFamily} style={{ fontFamily: o.fontFamily }}
-            onChange={(e) => { const v = e.target.value; set({ fontFamily: v }); document.fonts?.load(`40px "${v}"`).then(() => { o.set({ fontFamily: v }); o.initDimensions?.(); commit(); }); }}>
-            {FONTS.map((x) => <option key={x} value={x} style={{ fontFamily: x }}>{x}</option>)}
-          </select>
+          <FontPicker value={o.fontFamily} onChange={v => { set({ fontFamily: v }); document.fonts?.load(`40px "${v}"`).then(() => { o.set({ fontFamily: v }); o.initDimensions?.(); commit(); }); }} />
           <Slider label="Font size" value={o.fontSize} min={6} max={600} onChange={(v) => set({ fontSize: v })} />
           <div className="flex gap-1">
             <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
@@ -647,6 +680,20 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
       </Section>
     </div>
   );
+}
+
+function DesignEdit({ c, commit }: { c: Obj; commit: () => void }) {
+  const a: DesignAdjustments = c.designAdjustments;
+  const set = (key: keyof DesignAdjustments, value: number) => { c.designAdjustments = { ...a, [key]: value }; commit(); };
+  return <Section title="Whole design">
+    <Slider label="Saturation" value={a.saturation} min={-100} max={100} onChange={v => set("saturation", v)} />
+    <Slider label="Contrast" value={a.contrast} min={-100} max={100} onChange={v => set("contrast", v)} />
+    <Slider label="Brightness" value={a.brightness} min={-100} max={100} onChange={v => set("brightness", v)} />
+    <Slider label="Blur" value={a.blur} min={0} max={30} step={0.5} onChange={v => set("blur", v)} />
+    <Slider label="Grain" value={a.grain} min={0} max={100} onChange={v => set("grain", v)} />
+    <Slider label="Warmth" value={a.warmth} min={0} max={100} onChange={v => set("warmth", v)} />
+    <Button variant="outline" className="mt-3 w-full" onClick={() => { c.designAdjustments = { ...DEFAULT_ADJUSTMENTS }; commit(); }}><RotateCcw /> Reset adjustments</Button>
+  </Section>;
 }
 
 function ImageCrop({ o, set }: { o: Obj; set: (p: Record<string, unknown>) => void }) {
