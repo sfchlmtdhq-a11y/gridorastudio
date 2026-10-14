@@ -32,7 +32,7 @@ const ICONS: Record<string, string> = {
   Home: "M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z",
   Crown: "M2 7l5 4 5-7 5 7 5-4-2 12H4z",
 };
-type Tab = "props" | "layers" | "shapes" | "stickers" | "icons" | "bg" | "edit";
+type Tab = "props" | "textTools" | "position" | "fill" | "stroke" | "effects" | "layers" | "shapes" | "stickers" | "icons" | "bg" | "edit";
 
 export function Editor({ id }: { id: string }) {
   const nav = useNavigate();
@@ -40,6 +40,7 @@ export function Editor({ id }: { id: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const backgroundFileRef = useRef<HTMLInputElement>(null);
+  const tapRef = useRef<{ target: Obj | null; count: number }>({ target: null, count: 0 });
   const fc = useRef<Obj>(null);
   const fab = useRef<Fab | null>(null);
   const proj = useRef<Project | null>(null);
@@ -164,11 +165,18 @@ export function Editor({ id }: { id: string }) {
       c.on("object:added", onChange);
       c.on("object:removed", onChange);
       c.on("text:changed", onChange);
-      const onSel = () => { force(); if (c.getActiveObject()) { setTab(current => current === "layers" || current === "edit" ? current : "props"); setPanelOpen(true); } };
+      const onSel = () => { force(); };
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
       c.on("selection:cleared", () => force());
-      c.on("mouse:down", ({ target }: { target?: Obj }) => { if (!target) { setTab("bg"); setPanelOpen(true); } });
+      c.on("mouse:down", ({ target }: { target?: Obj }) => {
+        if (!target) { tapRef.current = { target: null, count: 0 }; setTab("bg"); setPanelOpen(true); return; }
+        if (tapRef.current.target === target) tapRef.current.count += 1;
+        else tapRef.current = { target, count: 1 };
+        setPanelOpen(tapRef.current.count >= 2);
+        if (tapRef.current.count >= 2) setTab(target.type === "textbox" || target.type === "i-text" || target.type === "text" ? "textTools" : "props");
+        force();
+      });
       setReady(true);
       requestAnimationFrame(() => { fit(); snapshot(); });
       document.fonts?.ready.then(() => c.requestRenderAll());
@@ -373,6 +381,11 @@ export function Editor({ id }: { id: string }) {
   const h = hist.current;
   const objects: Obj[] = ready && fc.current ? [...fc.current.getObjects()].reverse() : [];
   const openTab = (t: Tab) => { setTab(t); setPanelOpen(true); };
+  const isTextSelected = !!o && ["textbox", "i-text", "text"].includes(o.type);
+  const isElementSelected = !!o;
+  const contextualTabs: Tab[] = isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : ["bg", "layers", "edit"];
+  const tabLabel: Record<Tab, string> = { props: "Properties", textTools: "Text tools", position: "Position", fill: "Fill", stroke: "Stroke", effects: "Effects", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons", bg: "Canvas", edit: "Edit" };
+  const tabIcon: Record<Tab, ReactNode> = { props: <SlidersHorizontal />, textTools: <Type />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, bg: <PaintBucket />, edit: <SlidersHorizontal /> };
   const selectionBounds = o?.getBoundingRect?.();
   const canvasBounds = canvasEl.current?.getBoundingClientRect();
   const wrapBounds = wrapRef.current?.getBoundingClientRect();
@@ -451,7 +464,7 @@ export function Editor({ id }: { id: string }) {
             onPointerMove={(e) => { const d = drag.current; if (d && wrapRef.current) { wrapRef.current.scrollLeft = d.sl - (e.clientX - d.x); wrapRef.current.scrollTop = d.st - (e.clientY - d.y); } }}
             onPointerUp={() => (drag.current = null)}
             onPointerLeave={() => (drag.current = null)}
-            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(44vh+4rem)] md:bottom-[32vh]" : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(24vh+4rem)] md:bottom-[22vh]" : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
           >
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
               <div className={`checker shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
@@ -478,17 +491,18 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 h-[44vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:h-[32vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 h-[24vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:h-[22vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
           <div className="flex items-center gap-1 border-b border-border p-2">
-            {(["props", "layers", "bg", "edit"] as Tab[]).map((t) => (
+            {contextualTabs.map((t) => (
               <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
-                {t === "props" ? "Properties" : t === "layers" ? "Layers" : t === "edit" ? "Edit" : "Canvas"}
+                <span className="inline-flex items-center gap-1 [&_svg]:h-4 [&_svg]:w-4">{tabIcon[t]}{tabLabel[t]}</span>
               </Button>
             ))}
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
           <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
+            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} />}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
               <div className="space-y-1">
@@ -678,7 +692,7 @@ function ShapeProperties({ o, f, set, commit }: { o: Obj; f: Fab; set: (p: Recor
   );
 }
 
-function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => void; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
+function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o instanceof f.IText || o instanceof f.Textbox || o instanceof f.FabricText;
   const isImg = o instanceof f.FabricImage;
@@ -694,6 +708,15 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
     const cur = { color: sh?.color ?? "#000000", blur: sh?.blur ?? 10, offsetX: sh?.offsetX ?? 5, offsetY: sh?.offsetY ?? 5 };
     set({ shadow: new f.Shadow({ ...cur, ...p }) });
   };
+  if (mode === "general") return (
+    <div className="flex min-w-[calc(100vw-2rem)] items-start gap-2 md:min-w-[240px]">
+      <IconBtn label="Copy" onClick={actions.dup}><Copy /></IconBtn>
+      <IconBtn label="Bring forward" onClick={() => actions.order("up")}><ArrowUp /></IconBtn>
+      <IconBtn label="Send backward" onClick={() => actions.order("down")}><ArrowDown /></IconBtn>
+      <IconBtn label="Lock" onClick={() => actions.toggleLock(o)}><Lock /></IconBtn>
+      <IconBtn label="Delete" className="text-destructive" onClick={actions.del}><Trash2 /></IconBtn>
+    </div>
+  );
 
   return (
     <div className="flex min-w-max items-start gap-4 pb-2">
@@ -838,6 +861,48 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
       </Section>
     </div>
   );
+}
+
+type EditMode = "textTools" | "position" | "fill" | "stroke" | "effects";
+function ContextualTools({ o, f, mode, commit }: { o: Obj; f: Fab; mode: EditMode; commit: () => void }) {
+  const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
+  const isText = o.type === "textbox" || o.type === "i-text" || o.type === "text";
+  const fillAlpha = alphaOf(o.fill), strokeAlpha = alphaOf(o.stroke);
+  const shadow = o.shadow;
+  const shadowSet = (p: Partial<{ color: string; blur: number; offsetX: number; offsetY: number }>) => set({ shadow: new f.Shadow({ color: shadow?.color ?? "#000000", blur: shadow?.blur ?? 10, offsetX: shadow?.offsetX ?? 5, offsetY: shadow?.offsetY ?? 5, ...p }) });
+  if (mode === "textTools") return <Section title="Text tools">
+    {o.type === "textbox" && <textarea className="field min-h-[56px]" value={o.text ?? ""} onChange={(e) => set({ text: e.target.value })} />}
+    <FontPicker value={o.fontFamily ?? "Manrope"} onChange={(v) => { set({ fontFamily: v }); document.fonts?.load(`40px "${v}"`).then(() => { o.set({ fontFamily: v }); o.initDimensions?.(); commit(); }); }} />
+    <Slider label="Font size" value={o.fontSize ?? 24} min={6} max={600} onChange={(v) => set({ fontSize: v })} />
+    <Color label="Colour" value={toHex(o.fill, "#111111")} onChange={(v) => set({ fill: v })} />
+    <div className="flex flex-wrap gap-1">
+      <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
+      <IconBtn label="Italic" active={o.fontStyle === "italic"} onClick={() => set({ fontStyle: o.fontStyle === "italic" ? "normal" : "italic" })}><Italic /></IconBtn>
+      <button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ underline: !o.underline })}>Underline</button>
+      <IconBtn label="Align left" onClick={() => set({ textAlign: "left" })}><AlignLeft /></IconBtn><IconBtn label="Align center" onClick={() => set({ textAlign: "center" })}><AlignCenter /></IconBtn><IconBtn label="Align right" onClick={() => set({ textAlign: "right" })}><AlignRight /></IconBtn>
+    </div>
+  </Section>;
+  if (mode === "position") return <Section title="Position & size">
+    <div className="grid grid-cols-2 gap-2"><NumberField label="X" value={o.left ?? 0} onChange={(v) => set({ left: v })} /><NumberField label="Y" value={o.top ?? 0} onChange={(v) => set({ top: v })} /></div>
+    <div className="grid grid-cols-2 gap-2"><NumberField label="Width" value={o.getScaledWidth?.() ?? o.width ?? 0} onChange={(v) => set({ scaleX: v / Math.max(1, o.width ?? 1) })} /><NumberField label="Height" value={o.getScaledHeight?.() ?? o.height ?? 0} onChange={(v) => set({ scaleY: v / Math.max(1, o.height ?? 1) })} /></div>
+    {isText && <NumberField label="Padding" value={o.padding ?? 0} onChange={(v) => set({ padding: v })} />}
+    <Slider label="Rotation" value={o.angle ?? 0} min={-180} max={180} onChange={(v) => set({ angle: v })} /><Slider label="Opacity (%)" value={(o.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => set({ opacity: v / 100 })} />
+  </Section>;
+  if (mode === "fill") return <Section title="Fill">
+    <Slider label="Opacity (%)" value={fillAlpha * 100} min={0} max={100} onChange={(v) => set({ fill: withAlpha(o.fill, v / 100) })} />
+    <div className="flex gap-1 text-xs"><button className="flex-1 rounded-md bg-muted py-1.5" onClick={() => set({ fill: toHex(o.fill, "#c6f432") })}>Colour</button><button className="flex-1 rounded-md border border-border py-1.5" onClick={() => set({ fill: makeGradient(f, "#c6f432", "#ffffff", 0) })}>Gradient</button></div>
+    {typeof o.fill === "string" && <Color label="Fill colour" value={toHex(o.fill, "#c6f432")} onChange={(v) => set({ fill: withAlpha(v, fillAlpha) })} />}
+  </Section>;
+  if (mode === "stroke") return <Section title="Stroke">
+    <Slider label="Width" value={o.strokeWidth ?? 0} min={0} max={100} onChange={(v) => set({ strokeWidth: v, stroke: o.stroke ?? "#111111" })} /><Slider label="Opacity (%)" value={strokeAlpha * 100} min={0} max={100} onChange={(v) => set({ stroke: withAlpha(o.stroke, v / 100) })} />
+    <div className="flex gap-1 text-xs"><button className="flex-1 rounded-md bg-muted py-1.5" onClick={() => set({ stroke: toHex(o.stroke, "#111111") })}>Colour</button><button className="flex-1 rounded-md border border-border py-1.5" onClick={() => set({ stroke: makeGradient(f, "#111111", "#c6f432", 0) })}>Gradient</button></div>
+    {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} />}
+  </Section>;
+  return <Section title="Effects">
+    <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
+    {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
+    {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => set({ text3dDepth: e.target.checked ? 10 : 0 })} /> 3D text</label><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
+  </Section>;
 }
 
 function DesignEdit({ c, commit }: { c: Obj; commit: () => void }) {
