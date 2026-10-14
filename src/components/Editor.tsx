@@ -450,7 +450,7 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 max-h-[42vh] flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:max-h-[34vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 h-auto max-h-[24vh] flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:max-h-[22vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
           <div className="flex items-center gap-1 border-b border-border p-2">
             {(["props", "layers", "bg", "edit"] as Tab[]).map((t) => (
               <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
@@ -459,7 +459,7 @@ export function Editor({ id }: { id: string }) {
             ))}
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 md:flex md:items-start md:gap-6 md:overflow-x-auto md:overflow-y-hidden">
+          <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
@@ -556,7 +556,7 @@ function ShapeIcon({ k }: { k: string }) {
 }
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="mb-5 md:mb-0 md:min-w-[220px]">
+    <div className="mb-0 min-w-[220px]">
       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
       <div className="space-y-2">{children}</div>
     </div>
@@ -667,8 +667,8 @@ function Properties({ o, f, commit, actions }: { o: Obj; f: Fab; commit: () => v
   };
 
   return (
-    <div>
-      <div className="mb-5 grid grid-cols-6 gap-1">
+    <div className="flex min-w-max items-start gap-6">
+      <div className="grid min-w-[220px] grid-cols-6 gap-1">
         <IconBtn label="Duplicate" onClick={actions.dup}><Copy /></IconBtn>
         <IconBtn label="Bring forward" onClick={() => actions.order("up")}><ArrowUp /></IconBtn>
         <IconBtn label="Send backward" onClick={() => actions.order("down")}><ArrowDown /></IconBtn>
