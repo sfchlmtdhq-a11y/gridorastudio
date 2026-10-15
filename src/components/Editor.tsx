@@ -61,6 +61,7 @@ export function Editor({ id }: { id: string }) {
   const [saved, setSaved] = useState(true);
   const [adding, setAdding] = useState(false);
   const [transparentOpen, setTransparentOpen] = useState(false);
+  const [eraseBusy, setEraseBusy] = useState<string | null>(null);
   const [saveHomeOpen, setSaveHomeOpen] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ file: File; url: string; target: "element" | "background"; width: number; height: number } | null>(null);
   const [fitImportedImage, setFitImportedImage] = useState(true);
@@ -324,38 +325,72 @@ export function Editor({ id }: { id: string }) {
     }
     URL.revokeObjectURL(pending.url); setPendingImage(null);
   };
-  const eraseImageBackground = async (mode: "auto" | "color", pickedColor?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => {
+  const eraseImageBackground = async (mode: "smart" | "auto" | "color", pickedColor?: string, tolerance = 40) => {
     const c = fc.current, f = fab.current, old = active();
-    if (!c || !f || !old || old.type !== "image") return;
-    const source = old.getElement?.();
+    if (!c || !f || !old || old.type !== "image" || eraseBusy) return;
+    const source = old.getElement?.() as HTMLImageElement | undefined;
     if (!source?.naturalWidth || !source?.naturalHeight) return;
-    const work = document.createElement("canvas"); work.width = source.naturalWidth; work.height = source.naturalHeight;
-    const ctx = work.getContext("2d"); if (!ctx) return;
-    ctx.drawImage(source, 0, 0);
-    const image = ctx.getImageData(0, 0, work.width, work.height), px = image.data;
-    const samples = [0, work.width - 1, (work.height - 1) * work.width, (work.height * work.width) - 1].map((i) => [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]]);
-    const hex = pickedColor?.replace("#", "");
-    const picked = hex && hex.length === 6 ? [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)] : null;
-    if (mode === "auto") {
-      const visited = new Uint8Array(work.width * work.height), queue: number[] = [];
-      const nearSample = (index: number) => samples.some(([r = 0, g = 0, b = 0]) => Math.hypot((px[index] ?? 0) - r, (px[index + 1] ?? 0) - g, (px[index + 2] ?? 0) - b) < 88);
-      for (let x = 0; x < work.width; x++) { for (const y of [0, work.height - 1]) { const n = y * work.width + x; if (nearSample(n * 4)) { visited[n] = 1; queue.push(n); } } }
-      for (let y = 1; y < work.height - 1; y++) { for (const x of [0, work.width - 1]) { const n = y * work.width + x; if (nearSample(n * 4)) { visited[n] = 1; queue.push(n); } } }
-      let cursor = 0; while (cursor < queue.length) { const n = queue[cursor++] ?? 0; px[n * 4 + 3] = 0; const x = n % work.width, y = Math.floor(n / work.width); for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]] as Array<[number, number]>) { if (nx < 0 || ny < 0 || nx >= work.width || ny >= work.height) continue; const next = ny * work.width + nx; if (!visited[next] && nearSample(next * 4)) { visited[next] = 1; queue.push(next); } } }
+    setEraseBusy(mode === "smart" ? "Removing background… (first use downloads the engine)" : "Removing background…");
+    try {
+      const work = document.createElement("canvas"); work.width = source.naturalWidth; work.height = source.naturalHeight;
+      const ctx = work.getContext("2d", { willReadFrequently: true }); if (!ctx) return;
+      let blob: Blob | null = null;
+      if (mode === "smart") {
+        ctx.drawImage(source, 0, 0);
+        const input = await new Promise<Blob | null>((r) => work.toBlob(r, "image/png"));
+        if (!input) return;
+        const { removeBackground } = await import("@imgly/background-removal");
+        blob = await removeBackground(input, { output: { format: "image/png" } });
+      } else {
+        ctx.drawImage(source, 0, 0);
+        const W = work.width, H = work.height;
+        const image = ctx.getImageData(0, 0, W, H), px = image.data;
+        // tolerance 0-100 → colour distance; soft band for feathered edges
+        const hard = 10 + tolerance * 1.6, soft = hard + 30;
+        const dist = (i: number, r: number, g: number, b: number) => Math.hypot((px[i] ?? 0) - r, (px[i + 1] ?? 0) - g, (px[i + 2] ?? 0) - b);
+        const alphaFor = (d: number) => d <= hard ? 0 : d >= soft ? 255 : Math.round(((d - hard) / (soft - hard)) * 255);
+        if (mode === "color") {
+          const hex = (pickedColor ?? "#ffffff").replace("#", "");
+          const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+          for (let i = 0; i < px.length; i += 4) px[i + 3] = Math.min(px[i + 3] ?? 255, alphaFor(dist(i, r, g, b)));
+        } else {
+          // sample the border, average it into a few reference colours
+          const border: number[][] = [];
+          const step = Math.max(1, Math.floor((W + H) / 200));
+          for (let x = 0; x < W; x += step) { border.push([x, 0], [x, H - 1]); }
+          for (let y = 0; y < H; y += step) { border.push([0, y], [W - 1, y]); }
+          const refs: number[][] = [];
+          for (const [x = 0, y = 0] of border) { const i = (y * W + x) * 4; const col = [px[i] ?? 0, px[i + 1] ?? 0, px[i + 2] ?? 0]; if (!refs.some((r) => Math.hypot(r[0]! - col[0]!, r[1]! - col[1]!, r[2]! - col[2]!) < 24)) refs.push(col); if (refs.length > 12) break; }
+          const near = (n: number) => { let best = Infinity; for (const r of refs) { const d = dist(n * 4, r[0]!, r[1]!, r[2]!); if (d < best) best = d; } return best; };
+          const visited = new Uint8Array(W * H), queue = new Int32Array(W * H); let qe = 0;
+          const seed = (n: number) => { if (!visited[n] && near(n) < soft) { visited[n] = 1; queue[qe++] = n; } };
+          for (let x = 0; x < W; x++) { seed(x); seed((H - 1) * W + x); }
+          for (let y = 0; y < H; y++) { seed(y * W); seed(y * W + W - 1); }
+          let qs = 0;
+          while (qs < qe) {
+            const n = queue[qs++]!; const d = near(n);
+            px[n * 4 + 3] = Math.min(px[n * 4 + 3] ?? 255, alphaFor(d));
+            if (d > hard) continue; // edge pixel: feather but don't spread past it
+            const x = n % W;
+            if (x > 0) seed(n - 1); if (x < W - 1) seed(n + 1); if (n >= W) seed(n - W); if (n < W * (H - 1)) seed(n + W);
+          }
+        }
+        ctx.putImageData(image, 0, 0);
+        blob = await new Promise<Blob | null>((r) => work.toBlob(r, "image/png"));
+      }
+      if (!blob) return;
+      snapshot();
+      const url = await uploadDesignAsset(new File([blob], "background-erased.png", { type: "image/png" }), proj.current?.id);
+      const next = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+      next.set({ left: old.left, top: old.top, scaleX: (old.scaleX ?? 1) * (source.naturalWidth / (next.width || source.naturalWidth)), scaleY: (old.scaleY ?? 1) * (source.naturalHeight / (next.height || source.naturalHeight)), angle: old.angle, flipX: old.flipX, flipY: old.flipY, originX: old.originX, originY: old.originY, opacity: old.opacity, clipPath: old.clipPath, name: old.name });
+      const idx = c.getObjects().indexOf(old);
+      c.remove(old); c.insertAt(Math.max(0, idx), next); c.setActiveObject(next); c.requestRenderAll(); commit();
+    } catch (err) {
+      console.error(err);
+      alert("Couldn't remove the background from this photo. Try the Colour or Edges option instead.");
+    } finally {
+      setEraseBusy(null);
     }
-    for (let i = 0; i < px.length; i += 4) {
-      const r0 = px[i] ?? 0, g0 = px[i + 1] ?? 0, b0 = px[i + 2] ?? 0;
-      const pixel = i / 4, x = pixel % work.width, y = Math.floor(pixel / work.width);
-      const inCorner = !corner || (corner === "top-left" && x < work.width / 2 && y < work.height / 2) || (corner === "top-right" && x >= work.width / 2 && y < work.height / 2) || (corner === "bottom-left" && x < work.width / 2 && y >= work.height / 2) || (corner === "bottom-right" && x >= work.width / 2 && y >= work.height / 2);
-      if (mode === "color") { const remove = inCorner && (picked ? Math.hypot(r0 - (picked[0] ?? 0), g0 - (picked[1] ?? 0), b0 - (picked[2] ?? 0)) < 58 : false); if (remove) px[i + 3] = 0; }
-    }
-    ctx.putImageData(image, 0, 0);
-    const blob = await new Promise<Blob | null>((resolve) => work.toBlob(resolve, "image/png"));
-    if (!blob) return;
-    const url = await uploadDesignAsset(new File([blob], "background-erased.png", { type: "image/png" }), proj.current?.id);
-    const next = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-    next.set({ left: old.left, top: old.top, scaleX: old.scaleX, scaleY: old.scaleY, angle: old.angle, flipX: old.flipX, flipY: old.flipY, originX: old.originX, originY: old.originY, name: old.name });
-    c.remove(old); c.add(next); c.setActiveObject(next); c.requestRenderAll(); commit();
   };
   const pickColorFromCanvas = async () => {
     const EyeDropperCtor = (window as Window & { EyeDropper?: new () => { open: () => Promise<{ sRGBHex: string }> } }).EyeDropper;
