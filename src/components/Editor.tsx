@@ -338,10 +338,10 @@ export function Editor({ id }: { id: string }) {
     const picked = hex && hex.length === 6 ? [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)] : null;
     if (mode === "auto") {
       const visited = new Uint8Array(work.width * work.height), queue: number[] = [];
-      const nearSample = (index: number) => samples.some(([r = 0, g = 0, b = 0]) => Math.hypot((px[index] ?? 0) - r, (px[index + 1] ?? 0) - g, (px[index + 2] ?? 0) - b) < 58);
+      const nearSample = (index: number) => samples.some(([r = 0, g = 0, b = 0]) => Math.hypot((px[index] ?? 0) - r, (px[index + 1] ?? 0) - g, (px[index + 2] ?? 0) - b) < 88);
       for (let x = 0; x < work.width; x++) { for (const y of [0, work.height - 1]) { const n = y * work.width + x; if (nearSample(n * 4)) { visited[n] = 1; queue.push(n); } } }
       for (let y = 1; y < work.height - 1; y++) { for (const x of [0, work.width - 1]) { const n = y * work.width + x; if (nearSample(n * 4)) { visited[n] = 1; queue.push(n); } } }
-      while (queue.length) { const n = queue.shift() ?? 0; px[n * 4 + 3] = 0; const x = n % work.width, y = Math.floor(n / work.width); for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]] as Array<[number, number]>) { if (nx < 0 || ny < 0 || nx >= work.width || ny >= work.height) continue; const next = ny * work.width + nx; if (!visited[next] && nearSample(next * 4)) { visited[next] = 1; queue.push(next); } } }
+      let cursor = 0; while (cursor < queue.length) { const n = queue[cursor++] ?? 0; px[n * 4 + 3] = 0; const x = n % work.width, y = Math.floor(n / work.width); for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]] as Array<[number, number]>) { if (nx < 0 || ny < 0 || nx >= work.width || ny >= work.height) continue; const next = ny * work.width + nx; if (!visited[next] && nearSample(next * 4)) { visited[next] = 1; queue.push(next); } } }
     }
     for (let i = 0; i < px.length; i += 4) {
       const r0 = px[i] ?? 0, g0 = px[i + 1] ?? 0, b0 = px[i + 2] ?? 0;
@@ -409,9 +409,9 @@ export function Editor({ id }: { id: string }) {
   const applyAiAction = async (a: GeminiAction) => {
     const c = fc.current, f = fab.current, o = active();
     if (!c || !f) return;
-    if (a.type === "addText") { const text = new f.Textbox(a.text, { width: W() * 0.6, fontSize: a.fontSize ?? Math.round(Math.min(W(), H()) / 12), fill: a.fill ?? "#111111", fontWeight: a.fontWeight ?? "normal", fontFamily: "Manrope", textAlign: "center", name: "AI text" }); add(text); text.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2 }); text.setCoords(); commit(); return; }
-    if (a.type === "addIcon") { addIcon(a.icon); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? "#111111" }); if (a.scale) { created.scaleX = (created.scaleX ?? 1) * a.scale; created.scaleY = (created.scaleY ?? 1) * a.scale; } created.setCoords(); commit(); } return; }
-    if (a.type === "addShape") { addShape(a.shape); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? created.fill, stroke: a.stroke ?? created.stroke, strokeWidth: a.strokeWidth ?? created.strokeWidth }); if (a.width) created.scaleToWidth(a.width); if (a.height) created.scaleToHeight(a.height); created.setCoords(); commit(); } return; }
+    if (a.type === "addText") { rememberPaletteColor(a.fill); const text = new f.Textbox(a.text, { width: W() * 0.6, fontSize: a.fontSize ?? Math.round(Math.min(W(), H()) / 12), fill: a.fill ?? "#111111", fontWeight: a.fontWeight ?? "normal", fontFamily: "Manrope", textAlign: "center", name: "AI text" }); add(text); text.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2 }); text.setCoords(); commit(); return; }
+    if (a.type === "addIcon") { rememberPaletteColor(a.fill); addIcon(a.icon); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? "#111111" }); if (a.scale) { created.scaleX = (created.scaleX ?? 1) * a.scale; created.scaleY = (created.scaleY ?? 1) * a.scale; } created.setCoords(); commit(); } return; }
+    if (a.type === "addShape") { rememberPaletteColor(a.fill); rememberPaletteColor(a.stroke); addShape(a.shape); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? created.fill, stroke: a.stroke ?? created.stroke, strokeWidth: a.strokeWidth ?? created.strokeWidth }); if (a.width) created.scaleToWidth(a.width); if (a.height) created.scaleToHeight(a.height); created.setCoords(); commit(); } return; }
     const editable = o && (isTextObject(o) || ["rect", "circle", "ellipse", "triangle", "polygon", "path", "line"].includes(o.type) && o.type !== "image");
     if (!editable) return;
     if (a.type === "deleteSelected") { del(); return; }
@@ -640,7 +640,7 @@ export function Editor({ id }: { id: string }) {
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
           <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
-            {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
+            {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} onPickColor={pickColorFromCanvas} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
             {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(mode, color, corner) => { void eraseImageBackground(mode, color, corner); }} onPickColor={pickColorFromCanvas} onMaskImage={maskImage} />}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
@@ -776,13 +776,13 @@ function NumberField({ label, value, onChange }: { label: string; value: number;
     </label>
   );
 }
-function Color({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <label className="flex items-center justify-between text-xs text-muted-foreground">
-      {label}
-      <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="h-8 w-12 cursor-pointer rounded border border-border bg-transparent" />
-    </label>
-  );
+function rememberPaletteColor(value: unknown) { if (typeof window === "undefined" || typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) return; try { const current = JSON.parse(window.localStorage.getItem("gridora-color-palette") || "[]") as string[]; const colors = [value.toLowerCase(), ...current.filter((x) => x.toLowerCase() !== value.toLowerCase())].slice(0, 24); window.localStorage.setItem("gridora-color-palette", JSON.stringify(colors)); } catch { /* storage can be unavailable */ } }
+function Color({ label, value, onChange, onPick }: { label: string; value: string; onChange: (v: string) => void; onPick?: () => Promise<string | null> }) {
+  const [draft, setDraft] = useState(value);
+  const [palette, setPalette] = useState<string[]>(() => { if (typeof window === "undefined") return []; try { return JSON.parse(window.localStorage.getItem("gridora-color-palette") || "[]") as string[]; } catch { return []; } });
+  useEffect(() => setDraft(value), [value]);
+  const apply = (next: string) => { if (!/^#[0-9a-f]{6}$/i.test(next)) return; setDraft(next); onChange(next); const colors = [next.toLowerCase(), ...palette.filter((x) => x.toLowerCase() !== next.toLowerCase())].slice(0, 24); setPalette(colors); rememberPaletteColor(next); };
+  return <div className="space-y-1 text-xs text-muted-foreground"><div className="flex items-center gap-2"><span className="min-w-0 flex-1">{label}</span><input type="color" value={toHex(draft, "#000000")} onChange={(e) => apply(e.target.value)} className="h-8 w-10 cursor-pointer rounded border border-border bg-transparent" /><input className="field h-8 w-24 px-2 text-[11px] uppercase" value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={() => apply(draft)} placeholder="#000000" aria-label={`${label} hex code`} />{onPick && <button type="button" className="rounded border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={async () => { const picked = await onPick(); if (picked) apply(picked); }}>Pick</button>}</div>{palette.length > 0 && <div className="flex flex-wrap gap-1" aria-label="Saved colours">{palette.map((color) => <button type="button" key={color} title={color} aria-label={`Use saved colour ${color}`} className="h-5 w-5 rounded-full border border-border" style={{ backgroundColor: color }} onClick={() => apply(color)} />)}</div>}</div>;
 }
 const toHex = (v: unknown, d = "#000000") => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v : d);
 const alphaOf = (v: unknown) => {
@@ -803,7 +803,7 @@ function makeGradient(f: Fab, a: string, b: string, angle: number, w = 1, h = 1,
 }
 
 /* ---------- Properties ---------- */
-function ShapeProperties({ o, f, set, commit }: { o: Obj; f: Fab; set: (p: Record<string, unknown>) => void; commit: () => void }) {
+function ShapeProperties({ o, f, set, commit, onPickColor }: { o: Obj; f: Fab; set: (p: Record<string, unknown>) => void; commit: () => void; onPickColor?: () => Promise<string | null> }) {
   const isRect = o instanceof f.Rect;
   const width = Math.max(1, o.getScaledWidth?.() ?? o.width ?? 1);
   const height = Math.max(1, o.getScaledHeight?.() ?? o.height ?? 1);
@@ -831,7 +831,7 @@ function ShapeProperties({ o, f, set, commit }: { o: Obj; f: Fab; set: (p: Recor
           <button className={`flex-1 rounded-md py-1.5 ${typeof o.fill === "string" ? "bg-muted" : "border border-border"}`} onClick={() => set({ fill: toHex(o.fill, "#c6f432") })}>Colour</button>
           <button className={`flex-1 rounded-md py-1.5 ${typeof o.fill === "object" ? "bg-muted" : "border border-border"}`} onClick={setFillGradient}>Gradient</button>
         </div>
-        {typeof o.fill === "string" && <Color label="Fill colour" value={toHex(o.fill, "#c6f432")} onChange={(v) => set({ fill: withAlpha(v, fillAlpha) })} />}
+        {typeof o.fill === "string" && <Color label="Fill colour" value={toHex(o.fill, "#c6f432")} onChange={(v) => set({ fill: withAlpha(v, fillAlpha) })} onPick={onPickColor} />}
       </Section>
 
       <Section title="Stroke">
@@ -847,7 +847,7 @@ function ShapeProperties({ o, f, set, commit }: { o: Obj; f: Fab; set: (p: Recor
   );
 }
 
-function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
+function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; onPickColor?: () => Promise<string | null>; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o instanceof f.IText || o instanceof f.Textbox || o instanceof f.FabricText;
   const isImg = o instanceof f.FabricImage;
@@ -938,7 +938,7 @@ function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fa
           </Section>
 
           <Section title="Colour & texture">
-            <Color label="Colour" value={toHex(o.fill, "#111111")} onChange={(v) => set({ fill: v })} />
+            <Color label="Colour" value={toHex(o.fill, "#111111")} onChange={(v) => set({ fill: v })} onPick={onPickColor} />
             <div className="flex gap-1 text-xs">
               <button className="flex-1 rounded-md bg-muted py-1.5">Solid</button>
               <button className="flex-1 rounded-md border border-border py-1.5" onClick={() => set({ fill: makeGradient(f, toHex(o.fill, "#c6f432"), "#ffffff", 0) })}>Texture / gradient</button>
@@ -960,7 +960,7 @@ function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fa
         </>
       )}
 
-      {isShape && <ShapeProperties o={o} f={f} set={set} commit={commit} />}
+      {isShape && <ShapeProperties o={o} f={f} set={set} commit={commit} onPickColor={onPickColor} />}
 
       {!isImg && !isShape && (
         <Section title={isLine ? "Line color" : "Fill"}>
@@ -979,7 +979,7 @@ function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fa
               <Slider label="Angle" value={g.angle} min={0} max={360} onChange={(v) => { const n = { ...g, angle: v }; setG(n); set({ fill: makeGradient(f, n.a, n.b, n.angle) }); }} />
             </>
           ) : (
-            <Color label="Color" value={toHex(o.fill)} onChange={(v) => set({ fill: v })} />
+            <Color label="Color" value={toHex(o.fill)} onChange={(v) => set({ fill: v })} onPick={onPickColor} />
           )}
         </Section>
       )}
@@ -1037,7 +1037,7 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, onPickColor, o
     {o.type === "textbox" && <textarea className="field min-h-[56px]" value={o.text ?? ""} onChange={(e) => set({ text: e.target.value })} />}
     <FontPicker value={o.fontFamily ?? "Manrope"} onChange={(v) => { set({ fontFamily: v }); document.fonts?.load(`40px "${v}"`).then(() => { o.set({ fontFamily: v }); o.initDimensions?.(); commit(); }); }} />
     <Slider label="Font size" value={o.fontSize ?? 24} min={6} max={600} onChange={(v) => set({ fontSize: v })} />
-    <Color label="Colour" value={toHex(o.fill, "#111111")} onChange={(v) => set({ fill: v })} />
+    <Color label="Colour" value={toHex(o.fill, "#111111")} onChange={(v) => set({ fill: v })} onPick={onPickColor} />
     <Slider label="Text curve" value={Number(o.textCurve ?? 0)} min={-160} max={160} onChange={setCurve} />
     <div className="flex flex-wrap gap-1">
       <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
@@ -1056,15 +1056,15 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, onPickColor, o
   if (mode === "fill") return <Section title="Fill">
     <Slider label="Opacity (%)" value={fillAlpha * 100} min={0} max={100} onChange={(v) => set({ fill: withAlpha(o.fill, v / 100) })} />
     <div className="flex gap-1 text-xs"><button className="flex-1 rounded-md bg-muted py-1.5" onClick={() => set({ fill: toHex(o.fill, "#c6f432") })}>Colour</button><button className="flex-1 rounded-md border border-border py-1.5" onClick={() => set({ fill: makeGradient(f, "#c6f432", "#ffffff", 0) })}>Gradient</button></div>
-    {typeof o.fill === "string" && <Color label="Fill colour" value={toHex(o.fill, "#c6f432")} onChange={(v) => set({ fill: withAlpha(v, fillAlpha) })} />}
+    {typeof o.fill === "string" && <Color label="Fill colour" value={toHex(o.fill, "#c6f432")} onChange={(v) => set({ fill: withAlpha(v, fillAlpha) })} onPick={onPickColor} />}
   </Section>;
   if (mode === "stroke") return <Section title="Stroke">
     <Slider label="Width" value={o.strokeWidth ?? 0} min={0} max={100} onChange={(v) => set({ strokeWidth: v, stroke: o.stroke ?? "#111111" })} /><Slider label="Opacity (%)" value={strokeAlpha * 100} min={0} max={100} onChange={(v) => set({ stroke: withAlpha(o.stroke, v / 100) })} />
     <div className="flex gap-1 text-xs"><button className="flex-1 rounded-md bg-muted py-1.5" onClick={() => set({ stroke: toHex(o.stroke, "#111111") })}>Colour</button><button className="flex-1 rounded-md border border-border py-1.5" onClick={() => set({ stroke: makeGradient(f, "#111111", "#c6f432", 0) })}>Gradient</button></div>
-    {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} />}
+    {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} onPick={onPickColor} />}
   </Section>;
   return <Section title="Effects">
-    {o.type === "image" && <><div className="flex gap-1 text-xs"><button className={`flex-1 rounded-md py-1.5 ${eraseMode === "auto" ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode("auto")}>Auto remove</button><button className={`flex-1 rounded-md py-1.5 ${eraseMode === "color" ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode("color")}>Pick colour</button></div>{eraseMode === "auto" ? <button className="w-full rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={() => onEraseBackground("auto")}>Automatically remove background</button> : <><div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><input className="field min-w-0 flex-1 text-xs uppercase" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} placeholder="#ffffff" pattern="^#[0-9a-fA-F]{6}$" /><button className="rounded-md border border-border px-2 py-2 text-xs hover:bg-muted" onClick={async () => { const picked = await onPickColor(); if (picked) setEraseColor(picked); }}>Pick from image</button></div><div className="flex gap-1"><select className="field flex-1 text-xs" value={eraseCorner} onChange={(e) => setEraseCorner(e.target.value as typeof eraseCorner)}><option value="top-left">Whole image</option><option value="top-right">Top-right section</option><option value="bottom-left">Bottom-left section</option><option value="bottom-right">Bottom-right section</option></select><button className="rounded-md border border-border px-2 text-xs hover:bg-muted" onClick={() => onEraseBackground("color", eraseColor, eraseCorner === "top-left" ? undefined : eraseCorner)}>Erase colour</button></div></>}<div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
+    {o.type === "image" && <><div className="flex gap-1 text-xs"><button className={`flex-1 rounded-md py-1.5 ${eraseMode === "auto" ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode("auto")}>Auto remove</button><button className={`flex-1 rounded-md py-1.5 ${eraseMode === "color" ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode("color")}>Solid colour</button></div>{eraseMode === "auto" ? <button className="w-full rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={() => onEraseBackground("auto")}>Automatically remove background</button> : <div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><span className="text-[11px] text-muted-foreground">Choose a solid background colour</span><button className="rounded-md border border-border px-2 py-2 text-xs hover:bg-muted" onClick={() => onEraseBackground("color", eraseColor)}>Erase</button></div>}<div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
     {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => { const depth = e.target.checked ? 10 : 0; set({ text3dDepth: depth, shadow: e.target.checked ? new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: depth, offsetY: depth }) : null }); }} /> 3D text</label>{Number(o.text3dDepth ?? 0) > 0 && <Slider label="3D depth" value={Number(o.text3dDepth)} min={1} max={40} onChange={(v) => set({ text3dDepth: v, shadow: new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: v, offsetY: v }) })} />}<label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
