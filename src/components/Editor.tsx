@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type MouseEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
   Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Grid2X2,
-  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil,
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil, Sparkles, Send,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, saveProject, deleteProject, type Project } from "@/lib/projects";
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { FontPicker } from "./FontPicker";
 import { DEFAULT_ADJUSTMENTS, installDesignAdjustments, type DesignAdjustments } from "@/lib/design-adjustments";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
+import { askGeminiDesignAssistant, type GeminiAction } from "@/lib/gemini";
 
 type Fab = typeof import("fabric");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -66,6 +68,11 @@ export function Editor({ id }: { id: string }) {
   const [snapAlign, setSnapAlign] = useState(false);
   const snapAlignRef = useRef(false);
   const [alignmentGuide, setAlignmentGuide] = useState<{ axis: "x" | "y"; value: number } | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMessages, setAiMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const askAssistant = useServerFn(askGeminiDesignAssistant);
 
   const W = () => proj.current?.width ?? 1;
   const H = () => proj.current?.height ?? 1;
@@ -387,6 +394,32 @@ export function Editor({ id }: { id: string }) {
     c.fire("object:modified", { target: o });
     commit();
   };
+  const applyAiAction = async (a: GeminiAction) => {
+    const c = fc.current, f = fab.current, o = active();
+    if (!c || !f) return;
+    if (a.type === "addText") { const text = new f.Textbox(a.text, { width: W() * 0.6, fontSize: a.fontSize ?? Math.round(Math.min(W(), H()) / 12), fill: a.fill ?? "#111111", fontWeight: a.fontWeight ?? "normal", fontFamily: "Manrope", textAlign: "center", name: "AI text" }); add(text); text.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2 }); text.setCoords(); commit(); return; }
+    if (a.type === "addShape") { addShape(a.shape); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? created.fill, stroke: a.stroke ?? created.stroke, strokeWidth: a.strokeWidth ?? created.strokeWidth }); if (a.width) created.scaleToWidth(a.width); if (a.height) created.scaleToHeight(a.height); created.setCoords(); commit(); } return; }
+    if (a.type === "deleteSelected") { del(); return; }
+    if (a.type === "duplicateSelected") { await dup(); return; }
+    if (a.type === "moveSelected" && o) { o.set({ left: (o.left ?? 0) + a.dx, top: (o.top ?? 0) + a.dy }); o.setCoords(); commit(); return; }
+    if (a.type === "setOrder" && o) { order(a.direction === "front" ? "top" : a.direction === "forward" ? "up" : a.direction === "backward" ? "down" : "bottom"); return; }
+    if (a.type === "updateSelected" && o) { const next: Record<string, unknown> = {}; if (a.text !== undefined) next.text = a.text; if (a.fill) next.fill = a.fill; if (a.fontSize) next.fontSize = a.fontSize; if (a.fontWeight) next.fontWeight = a.fontWeight; if (a.left !== undefined) next.left = a.left; if (a.top !== undefined) next.top = a.top; if (a.angle !== undefined) next.angle = a.angle; if (a.scale !== undefined) { next.scaleX = a.scale; next.scaleY = a.scale; } if (a.opacity !== undefined) next.opacity = a.opacity; if (a.stroke) next.stroke = a.stroke; if (a.strokeWidth !== undefined) next.strokeWidth = a.strokeWidth; o.set(next); o.setCoords(); commit(); return; }
+    if (a.type === "setBackground") { c.backgroundColor = a.gradientStart && a.gradientEnd ? makeGradient(f, a.gradientStart, a.gradientEnd, 0, W(), H(), "pixels") : a.color ?? "#ffffff"; c.backgroundImage = undefined; commit(); return; }
+    if (a.type === "alignSelected" && o) { const w = o.getScaledWidth?.() ?? o.width ?? 0, h = o.getScaledHeight?.() ?? o.height ?? 0; o.set({ left: a.alignment === "left" ? w / 2 : a.alignment === "right" ? W() - w / 2 : W() / 2, top: a.alignment === "top" ? h / 2 : a.alignment === "bottom" ? H() - h / 2 : H() / 2 }); o.setCoords(); commit(); return; }
+    if (a.type === "arrange") { const list = c.getObjects().filter((x: Obj) => x !== c.backgroundImage); list.forEach((x: Obj, i: number) => x.set({ left: W() * (i + 1) / (list.length + 1), top: H() / 2 })); c.requestRenderAll(); commit(); }
+  };
+  const runAssistant = async () => {
+    const prompt = aiPrompt.trim();
+    if (!prompt || aiBusy || !fc.current) return;
+    setAiPrompt(""); setAiMessages((m) => [...m, { role: "user", text: prompt }]); setAiBusy(true);
+    try {
+      const selected = active();
+      const result = await askAssistant({ data: { prompt, canvas: { width: W(), height: H(), background: String(fc.current.backgroundColor ?? ""), selected: selected ? { type: selected.type, text: selected.text, left: selected.left, top: selected.top, width: selected.getScaledWidth?.() ?? selected.width, height: selected.getScaledHeight?.() ?? selected.height, fill: typeof selected.fill === "string" ? selected.fill : undefined } : null, objects: fc.current.getObjects().slice(0, 30).map((x: Obj) => ({ type: x.type, name: x.name, text: x.text, left: x.left, top: x.top, width: x.getScaledWidth?.() ?? x.width, height: x.getScaledHeight?.() ?? x.height })) } } });
+      for (const action of result.actions) await applyAiAction(action);
+      setAiMessages((m) => [...m, { role: "assistant", text: result.reply }]);
+    } catch (error) { setAiMessages((m) => [...m, { role: "assistant", text: error instanceof Error ? error.message : "The assistant could not complete that request." }]); }
+    finally { setAiBusy(false); }
+  };
   const toggleLock = (o: Obj) => {
     const l = !o.lockedLayer;
     o.set({ lockedLayer: l, selectable: !l, evented: !l });
@@ -512,6 +545,7 @@ export function Editor({ id }: { id: string }) {
           onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }}
         />
         <button title="Smart alignment" aria-label="Smart alignment" onClick={() => setSnapAlign((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${snapAlign ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Grid2X2 className="h-4 w-4" /> <span className="hidden sm:inline">Align</span></button>
+        <button title="AI design assistant" aria-label="AI design assistant" onClick={() => setAiOpen((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${aiOpen ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Sparkles className="h-4 w-4" /><span className="hidden sm:inline">Assistant</span></button>
         <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
         <div className="ml-auto flex items-center gap-1">
           <IconBtn label="Undo" disabled={h.i <= 0} onClick={undo}><Undo2 /></IconBtn>
@@ -531,6 +565,7 @@ export function Editor({ id }: { id: string }) {
         </div>
       </header>
 
+      {aiOpen && <section className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"><div className="flex items-center gap-2 border-b border-border p-3"><Sparkles className="h-4 w-4 text-primary" /><h2 className="font-semibold">Design assistant</h2><button className="ml-auto rounded p-1 hover:bg-muted" onClick={() => setAiOpen(false)} aria-label="Close assistant"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{aiMessages.length === 0 && <p className="text-xs text-muted-foreground">Ask me to add, edit, move, arrange, or style objects on your canvas.</p>}{aiMessages.map((message, i) => <div key={i} className={`rounded-lg p-2 text-sm ${message.role === "user" ? "ml-5 bg-primary/15" : "mr-5 bg-muted"}`}>{message.text}</div>)}{aiBusy && <p className="text-xs text-muted-foreground">Working on your design…</p>}</div><form className="flex gap-2 border-t border-border p-3" onSubmit={(e) => { e.preventDefault(); void runAssistant(); }}><input className="field min-w-0 flex-1" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Try: add a blue circle" disabled={aiBusy} /><button className="rounded-lg bg-primary p-2 text-primary-foreground disabled:opacity-50" disabled={aiBusy || !aiPrompt.trim()} aria-label="Send command"><Send className="h-4 w-4" /></button></form></section>}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* tool rail desktop */}
         <nav className="hidden w-20 shrink-0 flex-col gap-1 border-r border-border bg-card p-2 md:flex">
