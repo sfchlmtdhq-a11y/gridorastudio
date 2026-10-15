@@ -19,6 +19,7 @@ type Fab = typeof import("fabric");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Obj = any;
 const PROPS = ["name", "selectable", "evented", "lockedLayer", "text3dDepth", "textReflection", "textCurve"];
+const isTextObject = (o: Obj) => ["textbox", "i-text", "text"].includes(o?.type);
 const STICKERS = ["😀", "😍", "🔥", "✨", "🎉", "❤️", "👍", "💯", "⭐", "🌟", "🎁", "🎂", "🌈", "☀️", "🌙", "⚡", "🍕", "☕", "🎵", "📸", "🚀", "💎", "👑", "🏆", "🌸", "🍀", "🦋", "🐱", "🎈", "💥", "✅", "📍"];
 const ICONS: Record<string, string> = {
   Heart: "M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z",
@@ -323,7 +324,7 @@ export function Editor({ id }: { id: string }) {
     }
     URL.revokeObjectURL(pending.url); setPendingImage(null);
   };
-  const eraseImageBackground = async (pickedColor?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => {
+  const eraseImageBackground = async (mode: "auto" | "color", pickedColor?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => {
     const c = fc.current, f = fab.current, old = active();
     if (!c || !f || !old || old.type !== "image") return;
     const source = old.getElement?.();
@@ -335,12 +336,18 @@ export function Editor({ id }: { id: string }) {
     const samples = [0, work.width - 1, (work.height - 1) * work.width, (work.height * work.width) - 1].map((i) => [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]]);
     const hex = pickedColor?.replace("#", "");
     const picked = hex && hex.length === 6 ? [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)] : null;
+    if (mode === "auto") {
+      const visited = new Uint8Array(work.width * work.height), queue: number[] = [];
+      const nearSample = (index: number) => samples.some(([r = 0, g = 0, b = 0]) => Math.hypot((px[index] ?? 0) - r, (px[index + 1] ?? 0) - g, (px[index + 2] ?? 0) - b) < 58);
+      for (let x = 0; x < work.width; x++) { for (const y of [0, work.height - 1]) { const n = y * work.width + x; if (nearSample(n * 4)) { visited[n] = 1; queue.push(n); } } }
+      for (let y = 1; y < work.height - 1; y++) { for (const x of [0, work.width - 1]) { const n = y * work.width + x; if (nearSample(n * 4)) { visited[n] = 1; queue.push(n); } } }
+      while (queue.length) { const n = queue.shift() ?? 0; px[n * 4 + 3] = 0; const x = n % work.width, y = Math.floor(n / work.width); for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]] as Array<[number, number]>) { if (nx < 0 || ny < 0 || nx >= work.width || ny >= work.height) continue; const next = ny * work.width + nx; if (!visited[next] && nearSample(next * 4)) { visited[next] = 1; queue.push(next); } } }
+    }
     for (let i = 0; i < px.length; i += 4) {
       const r0 = px[i] ?? 0, g0 = px[i + 1] ?? 0, b0 = px[i + 2] ?? 0;
       const pixel = i / 4, x = pixel % work.width, y = Math.floor(pixel / work.width);
       const inCorner = !corner || (corner === "top-left" && x < work.width / 2 && y < work.height / 2) || (corner === "top-right" && x >= work.width / 2 && y < work.height / 2) || (corner === "bottom-left" && x < work.width / 2 && y >= work.height / 2) || (corner === "bottom-right" && x >= work.width / 2 && y >= work.height / 2);
-      const remove = inCorner && (picked ? Math.hypot(r0 - (picked[0] ?? 0), g0 - (picked[1] ?? 0), b0 - (picked[2] ?? 0)) < 58 : samples.some(([r = 0, g = 0, b = 0]) => Math.hypot(r0 - r, g0 - g, b0 - b) < 58));
-      if (remove) px[i + 3] = 0;
+      if (mode === "color") { const remove = inCorner && (picked ? Math.hypot(r0 - (picked[0] ?? 0), g0 - (picked[1] ?? 0), b0 - (picked[2] ?? 0)) < 58 : false); if (remove) px[i + 3] = 0; }
     }
     ctx.putImageData(image, 0, 0);
     const blob = await new Promise<Blob | null>((resolve) => work.toBlob(resolve, "image/png"));
@@ -349,6 +356,11 @@ export function Editor({ id }: { id: string }) {
     const next = await f.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     next.set({ left: old.left, top: old.top, scaleX: old.scaleX, scaleY: old.scaleY, angle: old.angle, flipX: old.flipX, flipY: old.flipY, originX: old.originX, originY: old.originY, name: old.name });
     c.remove(old); c.add(next); c.setActiveObject(next); c.requestRenderAll(); commit();
+  };
+  const pickColorFromCanvas = async () => {
+    const EyeDropperCtor = (window as Window & { EyeDropper?: new () => { open: () => Promise<{ sRGBHex: string }> } }).EyeDropper;
+    if (!EyeDropperCtor) return null;
+    try { return (await new EyeDropperCtor().open()).sRGBHex; } catch { return null; }
   };
   const maskImage = (shape: "square" | "circle" | "rounded" | "triangle" | "star" | "heart" | "polygon") => {
     const c = fc.current, f = fab.current, o = active();
@@ -398,15 +410,17 @@ export function Editor({ id }: { id: string }) {
     const c = fc.current, f = fab.current, o = active();
     if (!c || !f) return;
     if (a.type === "addText") { const text = new f.Textbox(a.text, { width: W() * 0.6, fontSize: a.fontSize ?? Math.round(Math.min(W(), H()) / 12), fill: a.fill ?? "#111111", fontWeight: a.fontWeight ?? "normal", fontFamily: "Manrope", textAlign: "center", name: "AI text" }); add(text); text.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2 }); text.setCoords(); commit(); return; }
+    if (a.type === "addIcon") { addIcon(a.icon); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? "#111111" }); if (a.scale) { created.scaleX = (created.scaleX ?? 1) * a.scale; created.scaleY = (created.scaleY ?? 1) * a.scale; } created.setCoords(); commit(); } return; }
     if (a.type === "addShape") { addShape(a.shape); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? created.fill, stroke: a.stroke ?? created.stroke, strokeWidth: a.strokeWidth ?? created.strokeWidth }); if (a.width) created.scaleToWidth(a.width); if (a.height) created.scaleToHeight(a.height); created.setCoords(); commit(); } return; }
+    const editable = o && (isTextObject(o) || ["rect", "circle", "ellipse", "triangle", "polygon", "path", "line"].includes(o.type) && o.type !== "image");
+    if (!editable) return;
     if (a.type === "deleteSelected") { del(); return; }
     if (a.type === "duplicateSelected") { await dup(); return; }
     if (a.type === "moveSelected" && o) { o.set({ left: (o.left ?? 0) + a.dx, top: (o.top ?? 0) + a.dy }); o.setCoords(); commit(); return; }
     if (a.type === "setOrder" && o) { order(a.direction === "front" ? "top" : a.direction === "forward" ? "up" : a.direction === "backward" ? "down" : "bottom"); return; }
     if (a.type === "updateSelected" && o) { const next: Record<string, unknown> = {}; if (a.text !== undefined) next.text = a.text; if (a.fill) next.fill = a.fill; if (a.fontSize) next.fontSize = a.fontSize; if (a.fontWeight) next.fontWeight = a.fontWeight; if (a.left !== undefined) next.left = a.left; if (a.top !== undefined) next.top = a.top; if (a.angle !== undefined) next.angle = a.angle; if (a.scale !== undefined) { next.scaleX = a.scale; next.scaleY = a.scale; } if (a.opacity !== undefined) next.opacity = a.opacity; if (a.stroke) next.stroke = a.stroke; if (a.strokeWidth !== undefined) next.strokeWidth = a.strokeWidth; o.set(next); o.setCoords(); commit(); return; }
-    if (a.type === "setBackground") { c.backgroundColor = a.gradientStart && a.gradientEnd ? makeGradient(f, a.gradientStart, a.gradientEnd, 0, W(), H(), "pixels") : a.color ?? "#ffffff"; c.backgroundImage = undefined; commit(); return; }
     if (a.type === "alignSelected" && o) { const w = o.getScaledWidth?.() ?? o.width ?? 0, h = o.getScaledHeight?.() ?? o.height ?? 0; o.set({ left: a.alignment === "left" ? w / 2 : a.alignment === "right" ? W() - w / 2 : W() / 2, top: a.alignment === "top" ? h / 2 : a.alignment === "bottom" ? H() - h / 2 : H() / 2 }); o.setCoords(); commit(); return; }
-    if (a.type === "arrange") { const list = c.getObjects().filter((x: Obj) => x !== c.backgroundImage); list.forEach((x: Obj, i: number) => x.set({ left: W() * (i + 1) / (list.length + 1), top: H() / 2 })); c.requestRenderAll(); commit(); }
+    if (a.type === "arrange") { const list = c.getObjects().filter((x: Obj) => x !== c.backgroundImage && x.type !== "image"); list.forEach((x: Obj, i: number) => x.set({ left: W() * (i + 1) / (list.length + 1), top: H() / 2 })); c.requestRenderAll(); commit(); }
   };
   const runAssistant = async () => {
     const prompt = aiPrompt.trim();
@@ -627,7 +641,7 @@ export function Editor({ id }: { id: string }) {
           </div>
           <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
-            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(color, corner) => { void eraseImageBackground(color, corner); }} onMaskImage={maskImage} />}
+            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(mode, color, corner) => { void eraseImageBackground(mode, color, corner); }} onPickColor={pickColorFromCanvas} onMaskImage={maskImage} />}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
               <div className="space-y-1">
@@ -1005,12 +1019,13 @@ function Properties({ o, f, commit, actions, mode = "general" }: { o: Obj; f: Fa
 }
 
 type EditMode = "textTools" | "position" | "fill" | "stroke" | "effects";
-function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: (color?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => void; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle" | "star" | "heart" | "polygon") => void }) {
+function ContextualTools({ o, f, mode, commit, onEraseBackground, onPickColor, onMaskImage }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; onEraseBackground: (mode: "auto" | "color", color?: string, corner?: "top-left" | "top-right" | "bottom-left" | "bottom-right") => void; onPickColor: () => Promise<string | null>; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle" | "star" | "heart" | "polygon") => void }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o.type === "textbox" || o.type === "i-text" || o.type === "text";
   const fillAlpha = alphaOf(o.fill), strokeAlpha = alphaOf(o.stroke);
   const shadow = o.shadow;
   const [eraseColor, setEraseColor] = useState("#ffffff");
+  const [eraseMode, setEraseMode] = useState<"auto" | "color">("auto");
   const [eraseCorner, setEraseCorner] = useState<"top-left" | "top-right" | "bottom-left" | "bottom-right">("top-left");
   const nudgeTimer = useRef<number | undefined>(undefined);
   const nudge = (dx: number, dy: number) => set({ left: (o.left ?? 0) + dx, top: (o.top ?? 0) + dy });
@@ -1049,7 +1064,7 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, onMaskImage }:
     {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} />}
   </Section>;
   return <Section title="Effects">
-    {o.type === "image" && <><div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button className="flex-1 rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={() => onEraseBackground(eraseColor)}>Erase chosen colour</button></div><div className="flex gap-1"><select className="field flex-1 text-xs" value={eraseCorner} onChange={(e) => setEraseCorner(e.target.value as typeof eraseCorner)}><option value="top-left">Top-left section</option><option value="top-right">Top-right section</option><option value="bottom-left">Bottom-left section</option><option value="bottom-right">Bottom-right section</option></select><button className="rounded-md border border-border px-2 text-xs hover:bg-muted" onClick={() => onEraseBackground(undefined, eraseCorner)}>Erase section</button></div><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
+    {o.type === "image" && <><div className="flex gap-1 text-xs"><button className={`flex-1 rounded-md py-1.5 ${eraseMode === "auto" ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode("auto")}>Auto remove</button><button className={`flex-1 rounded-md py-1.5 ${eraseMode === "color" ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode("color")}>Pick colour</button></div>{eraseMode === "auto" ? <button className="w-full rounded-md border border-border py-2 text-xs hover:bg-muted" onClick={() => onEraseBackground("auto")}>Automatically remove background</button> : <><div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><input className="field min-w-0 flex-1 text-xs uppercase" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} placeholder="#ffffff" pattern="^#[0-9a-fA-F]{6}$" /><button className="rounded-md border border-border px-2 py-2 text-xs hover:bg-muted" onClick={async () => { const picked = await onPickColor(); if (picked) setEraseColor(picked); }}>Pick from image</button></div><div className="flex gap-1"><select className="field flex-1 text-xs" value={eraseCorner} onChange={(e) => setEraseCorner(e.target.value as typeof eraseCorner)}><option value="top-left">Whole image</option><option value="top-right">Top-right section</option><option value="bottom-left">Bottom-left section</option><option value="bottom-right">Bottom-right section</option></select><button className="rounded-md border border-border px-2 text-xs hover:bg-muted" onClick={() => onEraseBackground("color", eraseColor, eraseCorner === "top-left" ? undefined : eraseCorner)}>Erase colour</button></div></>}<div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
     {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => { const depth = e.target.checked ? 10 : 0; set({ text3dDepth: depth, shadow: e.target.checked ? new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: depth, offsetY: depth }) : null }); }} /> 3D text</label>{Number(o.text3dDepth ?? 0) > 0 && <Slider label="3D depth" value={Number(o.text3dDepth)} min={1} max={40} onChange={(v) => set({ text3dDepth: v, shadow: new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: v, offsetY: v }) })} />}<label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
