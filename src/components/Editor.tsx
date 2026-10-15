@@ -812,7 +812,7 @@ function NumberField({ label, value, onChange }: { label: string; value: number;
   );
 }
 function rememberPaletteColor(value: unknown) { if (typeof window === "undefined" || typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) return; try { const current = JSON.parse(window.localStorage.getItem("gridora-color-palette") || "[]") as string[]; const colors = [value.toLowerCase(), ...current.filter((x) => x.toLowerCase() !== value.toLowerCase())].slice(0, 24); window.localStorage.setItem("gridora-color-palette", JSON.stringify(colors)); } catch { /* storage can be unavailable */ } }
-function Color({ label, value, onChange, onPick }: { label: string; value: string; onChange: (v: string) => void; onPick?: () => Promise<string | null> }) {
+function Color({ label, value, onChange, onPick }: { label: string; value: string; onChange: (v: string) => void; onPick?: (() => Promise<string | null>) | undefined }) {
   const [draft, setDraft] = useState(value);
   const [palette, setPalette] = useState<string[]>(() => { if (typeof window === "undefined") return []; try { return JSON.parse(window.localStorage.getItem("gridora-color-palette") || "[]") as string[]; } catch { return []; } });
   useEffect(() => setDraft(value), [value]);
@@ -838,7 +838,7 @@ function makeGradient(f: Fab, a: string, b: string, angle: number, w = 1, h = 1,
 }
 
 /* ---------- Properties ---------- */
-function ShapeProperties({ o, f, set, commit, onPickColor }: { o: Obj; f: Fab; set: (p: Record<string, unknown>) => void; commit: () => void; onPickColor?: () => Promise<string | null> }) {
+function ShapeProperties({ o, f, set, commit, onPickColor }: { o: Obj; f: Fab; set: (p: Record<string, unknown>) => void; commit: () => void; onPickColor?: (() => Promise<string | null>) | undefined }) {
   const isRect = o instanceof f.Rect;
   const width = Math.max(1, o.getScaledWidth?.() ?? o.width ?? 1);
   const height = Math.max(1, o.getScaledHeight?.() ?? o.height ?? 1);
@@ -882,7 +882,7 @@ function ShapeProperties({ o, f, set, commit, onPickColor }: { o: Obj; f: Fab; s
   );
 }
 
-function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; onPickColor?: () => Promise<string | null>; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
+function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; onPickColor?: (() => Promise<string | null>) | undefined; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o instanceof f.IText || o instanceof f.Textbox || o instanceof f.FabricText;
   const isImg = o instanceof f.FabricImage;
