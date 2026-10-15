@@ -40,18 +40,24 @@ export const askGeminiDesignAssistant = createServerFn({ method: "POST" })
     const modelList = await modelListResponse.json() as { models?: Array<{ baseModelId?: string; name?: string; supportedGenerationMethods?: string[] }> };
     const available = new Set((modelList.models ?? []).filter((item) => item.supportedGenerationMethods?.includes("generateContent")).flatMap((item) => [item.baseModelId, item.name?.replace(/^models\//, "")]).filter((item): item is string => Boolean(item)));
     const requested = process.env.GEMINI_MODEL;
-    const model = [requested, "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash"].find((candidate) => candidate && available.has(candidate));
-    if (!model) throw new Error("No compatible Gemini generateContent model is available for this API key.");
+    const models = [requested, "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash"].filter((candidate, index, all): candidate is string => Boolean(candidate) && all.indexOf(candidate) === index && available.has(candidate));
+    if (models.length === 0) throw new Error("No compatible Gemini generateContent model is available for this API key.");
     const instruction = `You are the Gridora Studio design assistant. Translate the user's natural-language request into safe, validated canvas actions. Never return code, HTML, CSS, URLs, or arbitrary commands. Return exactly one JSON object with this shape: {"reply":"short explanation","actions":[...]} and no markdown fences. Use only these action types: addText, addShape, updateSelected, deleteSelected, duplicateSelected, moveSelected, setOrder, setBackground, alignSelected, arrange. When the user says a color followed by words and "text" (for example, "blue semi circle text"), create an addText action whose text is the words ("semi circle"), fill is the requested color (#0000ff), x is the canvas center, and y is near the bottom center. Coordinates are canvas pixels; keep new objects inside the canvas when possible. If the request is unclear or unsupported, return an empty actions array and ask a short clarification.\n\nCanvas context:\n${JSON.stringify(data.canvas)}\n\nUser request:\n${data.prompt}`;
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: instruction }] }],
-        generationConfig: { temperature: 0.15, responseMimeType: "application/json" },
-      }),
-    });
-    if (!response.ok) throw new Error(`Design assistant request failed (${response.status}).`);
+    let response: Response | undefined;
+    for (const model of models) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: instruction }] }], generationConfig: { temperature: 0.15, responseMimeType: "application/json" } }),
+        });
+        if (response.ok) break;
+        if (![404, 429, 500, 502, 503, 504].includes(response.status)) break;
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      if (response.ok) break;
+    }
+    if (!response?.ok) throw new Error("The design assistant is temporarily unavailable. Please try again in a moment.");
     const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
     const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("The design assistant returned no response.");
