@@ -35,14 +35,20 @@ export const askGeminiDesignAssistant = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<GeminiResult> => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("The design assistant is not configured yet.");
-    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-    const instruction = `You are the Gridora Studio design assistant. Translate the user's natural-language request into safe, validated canvas actions. Never return code, HTML, CSS, URLs, or arbitrary commands. Use only the action types and fields described by the JSON schema. If the request is unclear or unsupported, return an empty actions array and ask a short clarification in reply. Coordinates are canvas pixels; keep new objects inside the canvas when possible.\n\nCanvas context:\n${JSON.stringify(data.canvas)}\n\nUser request:\n${data.prompt}`;
+    const modelListResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
+    if (!modelListResponse.ok) throw new Error("Gemini rejected the configured API key. Check the Gemini API key in Vercel.");
+    const modelList = await modelListResponse.json() as { models?: Array<{ baseModelId?: string; name?: string; supportedGenerationMethods?: string[] }> };
+    const available = new Set((modelList.models ?? []).filter((item) => item.supportedGenerationMethods?.includes("generateContent")).flatMap((item) => [item.baseModelId, item.name?.replace(/^models\//, "")]).filter((item): item is string => Boolean(item)));
+    const requested = process.env.GEMINI_MODEL;
+    const model = [requested, "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash"].find((candidate) => candidate && available.has(candidate));
+    if (!model) throw new Error("No compatible Gemini generateContent model is available for this API key.");
+    const instruction = `You are the Gridora Studio design assistant. Translate the user's natural-language request into safe, validated canvas actions. Never return code, HTML, CSS, URLs, or arbitrary commands. Return exactly one JSON object with this shape: {"reply":"short explanation","actions":[...]} and no markdown fences. Use only these action types: addText, addShape, updateSelected, deleteSelected, duplicateSelected, moveSelected, setOrder, setBackground, alignSelected, arrange. When the user says a color followed by words and "text" (for example, "blue semi circle text"), create an addText action whose text is the words ("semi circle"), fill is the requested color (#0000ff), x is the canvas center, and y is near the bottom center. Coordinates are canvas pixels; keep new objects inside the canvas when possible. If the request is unclear or unsupported, return an empty actions array and ask a short clarification.\n\nCanvas context:\n${JSON.stringify(data.canvas)}\n\nUser request:\n${data.prompt}`;
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: instruction }] }],
-        generationConfig: { temperature: 0.15, responseMimeType: "application/json", responseSchema: { type: "OBJECT", properties: { reply: { type: "STRING" }, actions: { type: "ARRAY", items: { type: "OBJECT", properties: { type: { type: "STRING" }, text: { type: "STRING" }, shape: { type: "STRING" }, x: { type: "NUMBER" }, y: { type: "NUMBER" }, width: { type: "NUMBER" }, height: { type: "NUMBER" }, fill: { type: "STRING" }, stroke: { type: "STRING" }, strokeWidth: { type: "NUMBER" }, fontSize: { type: "NUMBER" }, fontWeight: { type: "STRING" }, dx: { type: "NUMBER" }, dy: { type: "NUMBER" }, direction: { type: "STRING" }, alignment: { type: "STRING" }, left: { type: "NUMBER" }, top: { type: "NUMBER" }, angle: { type: "NUMBER" }, scale: { type: "NUMBER" }, opacity: { type: "NUMBER" }, gradientStart: { type: "STRING" }, gradientEnd: { type: "STRING" } }, required: ["type"] } } }, required: ["reply", "actions"] } },
+        generationConfig: { temperature: 0.15, responseMimeType: "application/json" },
       }),
     });
     if (!response.ok) throw new Error(`Design assistant request failed (${response.status}).`);
