@@ -5,6 +5,7 @@ import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
   Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Grid2X2,
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil, Sparkles, Send,
+  MousePointer2, Move, Group as GroupIcon, Ungroup, Frame, Grid3X3, Paintbrush, Heading, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, saveProject, deleteProject, type Project } from "@/lib/projects";
@@ -35,7 +36,7 @@ const ICONS: Record<string, string> = {
   Home: "M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z",
   Crown: "M2 7l5 4 5-7 5 7 5-4-2 12H4z",
 };
-type Tab = "props" | "textTools" | "position" | "fill" | "stroke" | "effects" | "layers" | "shapes" | "stickers" | "icons" | "bg" | "edit";
+type Tab = "props" | "textTools" | "textPresets" | "position" | "fill" | "stroke" | "effects" | "layers" | "shapes" | "stickers" | "icons" | "frames" | "grids" | "decorations" | "bg" | "edit";
 
 export function Editor({ id }: { id: string }) {
   const nav = useNavigate();
@@ -253,13 +254,28 @@ export function Editor({ id }: { id: string }) {
     setPanelOpen(true);
   };
 
+  const addTextPreset = (preset: "heading" | "subheading" | "body") => {
+    const f = fab.current;
+    if (!f) return;
+    const styles = {
+      heading: { text: "Add a heading", size: 0.105, weight: "bold" },
+      subheading: { text: "Add a subheading", size: 0.065, weight: "600" },
+      body: { text: "Add body text", size: 0.042, weight: "normal" },
+    } as const;
+    const style = styles[preset];
+    add(new f.Textbox(style.text, { width: W() * 0.82, fontSize: Math.max(16, Math.round(Math.min(W(), H()) * style.size)), fontFamily: "Manrope", fontWeight: style.weight, fill: "#111111", textAlign: "center", lineHeight: 1.16, name: preset[0]!.toUpperCase() + preset.slice(1) }));
+    setTab("textTools");
+    setPanelOpen(true);
+  };
+
   const addShape = (kind: string) => {
     const f = fab.current;
     if (!f) return;
     const s = Math.min(W(), H()) * 0.3;
     const fill = "#c6f432";
     let o: Obj;
-    if (kind === "rect") o = new f.Rect({ width: s, height: s, fill, name: "Rectangle" });
+    if (kind === "arrow") o = new f.Path(`M 0 0 L ${s} 0 M ${s * 0.72} ${-s * 0.2} L ${s} 0 L ${s * 0.72} ${s * 0.2}`, { fill: "", stroke: "#111111", strokeWidth: Math.max(4, s / 25), name: "Arrow" });
+    else if (kind === "rect") o = new f.Rect({ width: s, height: s, fill, name: "Rectangle" });
     else if (kind === "rounded") o = new f.Rect({ width: s, height: s * 0.7, rx: s * 0.12, ry: s * 0.12, fill, name: "Rounded rect" });
     else if (kind === "circle") o = new f.Circle({ radius: s / 2, fill, name: "Circle" });
     else if (kind === "ellipse") o = new f.Ellipse({ rx: s / 2, ry: s / 3, fill, name: "Ellipse" });
@@ -441,6 +457,60 @@ export function Editor({ id }: { id: string }) {
     c.fire("object:modified", { target: o });
     commit();
   };
+  const alignToCanvas = (edge: "left" | "centerX" | "right" | "top" | "centerY" | "bottom") => {
+    const c = fc.current, o = active();
+    if (!c || !o) return;
+    const bounds = o.getBoundingRect();
+    const dx = edge === "left" ? -bounds.left : edge === "centerX" ? W() / 2 - (bounds.left + bounds.width / 2) : edge === "right" ? W() - (bounds.left + bounds.width) : 0;
+    const dy = edge === "top" ? -bounds.top : edge === "centerY" ? H() / 2 - (bounds.top + bounds.height / 2) : edge === "bottom" ? H() - (bounds.top + bounds.height) : 0;
+    o.set({ left: (o.left ?? 0) + dx, top: (o.top ?? 0) + dy });
+    o.setCoords();
+    commit();
+  };
+  const groupSelection = () => {
+    const c = fc.current, f = fab.current, selection = active();
+    if (!c || !f || selection?.type !== "activeselection") return;
+    const children = selection.getObjects();
+    if (children.length < 2) return;
+    const index = Math.min(...children.map((child: Obj) => c.getObjects().indexOf(child)).filter((i: number) => i >= 0));
+    c.discardActiveObject();
+    const group = new f.Group(children);
+    group.set("name", "Group");
+    c.remove(...children);
+    c.insertAt(Math.max(0, index), group);
+    c.setActiveObject(group);
+    c.requestRenderAll();
+    commit();
+  };
+  const ungroupSelection = () => {
+    const c = fc.current, f = fab.current, group = active();
+    if (!c || !f || group?.type !== "group") return;
+    const index = Math.max(0, c.getObjects().indexOf(group));
+    const children = group.removeAll();
+    c.remove(group);
+    children.forEach((child: Obj, i: number) => c.insertAt(index + i, child));
+    if (children.length > 0) c.setActiveObject(new f.ActiveSelection(children, { canvas: c }));
+    c.requestRenderAll();
+    commit();
+  };
+  const addGrid = () => {
+    const c = fc.current, f = fab.current;
+    if (!c || !f) return;
+    const gap = Math.max(8, Math.min(W(), H()) * 0.015), cellW = W() * 0.34, cellH = H() * 0.34;
+    const cells: Obj[] = [];
+    for (let row = 0; row < 2; row++) for (let col = 0; col < 2; col++) {
+      cells.push(new f.Rect({ left: W() / 2 + (col ? 1 : -1) * (cellW + gap) / 2, top: H() / 2 + (row ? 1 : -1) * (cellH + gap) / 2, originX: "center", originY: "center", width: cellW, height: cellH, fill: "rgba(198,244,50,0.14)", stroke: "#c6f432", strokeWidth: 3, name: "Grid cell" }));
+    }
+    c.add(...cells);
+    c.setActiveObject(new f.ActiveSelection(cells, { canvas: c }));
+    setTab("props"); setPanelOpen(true); commit();
+  };
+  const addDecoration = () => {
+    const f = fab.current;
+    if (!f) return;
+    add(new f.Textbox("✦  ✧  ✦", { width: W() * 0.65, fontSize: Math.round(Math.min(W(), H()) / 8), fontFamily: "Manrope", fill: "#c6f432", textAlign: "center", name: "Decorative stars" }));
+    setTab("textTools"); setPanelOpen(true);
+  };
   const applyAiAction = async (a: GeminiAction) => {
     const c = fc.current, f = fab.current;
     if (!c || !f) return;
@@ -552,9 +622,10 @@ export function Editor({ id }: { id: string }) {
   const isTextSelected = !!o && ["textbox", "i-text", "text"].includes(o.type);
   const isImageSelected = !!o && o.type === "image";
   const isElementSelected = !!o;
-  const contextualTabs: Tab[] = tab === "layers" ? ["layers"] : tab === "edit" ? ["edit"] : ["shapes", "stickers", "icons"].includes(tab) ? [tab] : isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isImageSelected ? ["props", "position", "stroke", "effects"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : ["bg", "layers", "edit"];
-  const tabLabel: Record<Tab, string> = { props: "Properties", textTools: "Text tools", position: "Position", fill: "Fill", stroke: "Stroke", effects: "Effects", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons", bg: "Canvas", edit: "Edit" };
-  const tabIcon: Record<Tab, ReactNode> = { props: <SlidersHorizontal />, textTools: <Type />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, bg: <PaintBucket />, edit: <SlidersHorizontal /> };
+  const standaloneTabs: Tab[] = ["layers", "edit", "position", "shapes", "stickers", "icons", "textPresets", "frames", "grids", "decorations"];
+  const contextualTabs: Tab[] = standaloneTabs.includes(tab) ? [tab] : isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isImageSelected ? ["props", "position", "stroke", "effects", "frames"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : ["bg", "layers", "edit"];
+  const tabLabel: Record<Tab, string> = { props: "Properties", textTools: "Text tools", textPresets: "Text presets", position: "Position & align", fill: "Fill", stroke: "Stroke", effects: "Effects & filters", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons & illustrations", frames: "Frames", grids: "Grids", decorations: "Decorations", bg: "Canvas", edit: "Adjustments" };
+  const tabIcon: Record<Tab, ReactNode> = { props: <SlidersHorizontal />, textTools: <Type />, textPresets: <Heading />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, frames: <Frame />, grids: <Grid3X3 />, decorations: <Sparkles />, bg: <PaintBucket />, edit: <Paintbrush /> };
   const selectionBounds = o?.getBoundingRect?.();
   const canvasBounds = canvasEl.current?.getBoundingClientRect();
   const wrapBounds = wrapRef.current?.getBoundingClientRect();
@@ -569,14 +640,26 @@ export function Editor({ id }: { id: string }) {
     setPanelOpen(true);
   };
   const addTools: { icon: ReactNode; label: string; on: () => void }[] = [
-    { icon: <ImagePlus />, label: "Images", on: () => fileRef.current?.click() },
-    { icon: <Type />, label: "Text", on: addText },
+    { icon: <ImagePlus />, label: "Upload image", on: () => fileRef.current?.click() },
+    { icon: <Type />, label: "Add text", on: addText },
+    { icon: <Heading />, label: "Heading", on: () => addTextPreset("heading") },
+    { icon: <Type />, label: "Subheading", on: () => addTextPreset("subheading") },
+    { icon: <AlignLeft />, label: "Body text", on: () => addTextPreset("body") },
+    { icon: <Type />, label: "Text styles", on: () => openTab("textPresets") },
     { icon: <Shapes />, label: "Shapes", on: () => openTab("shapes") },
-    { icon: <Star />, label: "Icons", on: () => openTab("icons") },
+    { icon: <Smile />, label: "Stickers", on: () => openTab("stickers") },
+    { icon: <Star />, label: "Icons & illustrations", on: () => openTab("icons") },
+    { icon: <Frame />, label: "Frames", on: () => openTab("frames") },
+    { icon: <Grid3X3 />, label: "Grids", on: () => openTab("grids") },
+    { icon: <Sparkles />, label: "Decorations", on: () => openTab("decorations") },
     { icon: <CalendarDays />, label: "Date", on: addDate },
   ];
   const mainTools: { icon: ReactNode; label: string; on: () => void }[] = [
+    { icon: <MousePointer2 />, label: "Select", on: () => { setHand(false); if (fc.current) { fc.current.selection = true; fc.current.defaultCursor = "default"; fc.current.hoverCursor = "move"; } } },
+    { icon: <Move />, label: "Move", on: () => { setHand(false); if (fc.current) { fc.current.selection = true; fc.current.defaultCursor = "move"; fc.current.hoverCursor = "move"; } } },
     { icon: <Plus />, label: "Add", on: () => { setAdding(true); setPanelOpen(false); } },
+    { icon: <Scan />, label: "Position", on: () => openTab("position") },
+    { icon: <Frame />, label: "Crop / frame", on: () => openTab(isImageSelected ? "props" : "frames") },
     { icon: <Layers />, label: "Layers", on: () => openTab("layers") },
     { icon: <SlidersHorizontal />, label: "Edit", on: () => openTab("edit") },
     { icon: <Scan />, label: "Transparent", on: () => setTransparentOpen(true) },
@@ -622,7 +705,7 @@ export function Editor({ id }: { id: string }) {
       {aiOpen && <section className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"><div className="flex items-center gap-2 border-b border-border p-3"><Sparkles className="h-4 w-4 text-primary" /><h2 className="font-semibold">Design assistant</h2><button className="ml-auto rounded p-1 hover:bg-muted" onClick={() => setAiOpen(false)} aria-label="Close assistant"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{aiMessages.length === 0 && <p className="text-xs text-muted-foreground">Ask me to add, edit, move, arrange, or style objects on your canvas.</p>}{aiMessages.map((message, i) => <div key={i} className={`rounded-lg p-2 text-sm ${message.role === "user" ? "ml-5 bg-primary/15" : "mr-5 bg-muted"}`}>{message.text}</div>)}{aiBusy && <p className="text-xs text-muted-foreground">Working on your design…</p>}</div><form className="flex gap-2 border-t border-border p-3" onSubmit={(e) => { e.preventDefault(); void runAssistant(); }}><input className="field min-w-0 flex-1" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Try: add a blue circle" disabled={aiBusy} /><button className="rounded-lg bg-primary p-2 text-primary-foreground disabled:opacity-50" disabled={aiBusy || !aiPrompt.trim()} aria-label="Send command"><Send className="h-4 w-4" /></button></form></section>}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* tool rail desktop */}
-        <nav className="hidden w-20 shrink-0 flex-col gap-1 border-r border-border bg-card p-2 md:flex">
+        <nav aria-label="Design tools" className="hidden w-20 shrink-0 flex-col gap-1 overflow-y-auto border-r border-border bg-card p-2 md:flex">
           {adding && <Button variant="outline" size="icon" className="mx-auto mb-2 rounded-full" title="Back to tools" aria-label="Back to tools" onClick={backTools}><ArrowLeft /></Button>}
           {tools.map((t) => (
             <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-16 flex-col gap-1 px-0 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
@@ -680,8 +763,13 @@ export function Editor({ id }: { id: string }) {
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
           <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
-            {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} onPickColor={pickColorFromCanvas} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
-            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(mode, color, tol) => { void eraseImageBackground(mode, color, tol); }} eraseBusy={eraseBusy} onPickColor={pickColorFromCanvas} onMaskImage={maskImage} />}
+            {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} onPickColor={pickColorFromCanvas} mode="legacy" actions={{ dup, del, order, toggleLock, group: groupSelection, ungroup: ungroupSelection, align: alignToCanvas }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
+            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(mode, color, tol) => { void eraseImageBackground(mode, color, tol); }} eraseBusy={eraseBusy} onPickColor={pickColorFromCanvas} onMaskImage={maskImage} onAlign={alignToCanvas} />}
+            {ready && tab === "position" && !o && <p className="text-sm text-muted-foreground">Select an object to position, resize, rotate, flip, or align it to the canvas.</p>}
+            {ready && tab === "textPresets" && <Grid>{([["heading", "Heading", "Aa"], ["subheading", "Subheading", "Ab"], ["body", "Body text", "Ag"]] as const).map(([preset, label, sample]) => <Tile key={preset} onClick={() => addTextPreset(preset)}><span className="font-display text-2xl font-bold">{sample}</span><span className="text-[10px]">{label}</span></Tile>)}</Grid>}
+            {ready && tab === "frames" && (isImageSelected ? <Grid>{(["square", "circle", "rounded", "triangle", "star", "heart", "polygon"] as const).map((shape) => <Tile key={shape} onClick={() => maskImage(shape)}><Frame className="h-7 w-7 text-primary" /><span className="text-[10px] capitalize">{shape}</span></Tile>)}</Grid> : <p className="text-sm text-muted-foreground">Select or upload an image, then choose a frame shape to crop it.</p>)}
+            {ready && tab === "grids" && <Grid><Tile onClick={addGrid}><Grid3X3 className="h-7 w-7 text-primary" /><span className="text-[10px]">2 × 2 photo grid</span></Tile></Grid>}
+            {ready && tab === "decorations" && <Grid><Tile onClick={addDecoration}><Sparkles className="h-7 w-7 text-primary" /><span className="text-[10px]">Star ornament</span></Tile><Tile onClick={() => addShape("star")}><Star className="h-7 w-7 text-primary" /><span className="text-[10px]">Star shape</span></Tile><Tile onClick={() => addShape("line")}><span className="text-2xl text-primary">— — —</span><span className="text-[10px]">Divider</span></Tile></Grid>}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
               <div className="space-y-1">
@@ -708,7 +796,7 @@ export function Editor({ id }: { id: string }) {
             {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} />}
             {ready && tab === "shapes" && (
               <Grid>
-                {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line"].map((k) => (
+                {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow"].map((k) => (
                   <Tile key={k} onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>
                 ))}
               </Grid>
@@ -730,9 +818,9 @@ export function Editor({ id }: { id: string }) {
         {/* tool rail mobile */}
         <div className="shrink-0 border-t border-border bg-card md:hidden">
           {adding && <div className="flex h-12 items-center gap-3 px-4"><Button variant="outline" size="icon" className="h-8 w-8 rounded-full" aria-label="Back to tools" title="Back to tools" onClick={backTools}><ArrowLeft /></Button><span className="text-xs font-semibold text-primary">Add</span></div>}
-        <nav aria-label="Design tools" className="flex h-16 items-center justify-around gap-1 px-2">
+        <nav aria-label="Design tools" className="flex h-16 items-center justify-start gap-1 overflow-x-auto px-2">
           {tools.map((t) => (
-            <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-14 min-w-0 flex-1 flex-col gap-1 px-1 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
+            <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-14 min-w-[4.5rem] flex-col gap-1 px-1 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
               {t.icon}{t.label}
             </Button>
           ))}
@@ -790,6 +878,7 @@ function ShapeIcon({ k }: { k: string }) {
   if (k === "pentagon") return <svg viewBox="0 0 24 24" className={c}><path d="M12 2l10 7-4 12H6L2 9z" /></svg>;
   if (k === "hexagon") return <svg viewBox="0 0 24 24" className={c}><path d="M12 2l9 5v10l-9 5-9-5V7z" /></svg>;
   if (k === "star") return <svg viewBox="0 0 24 24" className={c}><path d={ICONS['Star']} /></svg>;
+  if (k === "arrow") return <svg viewBox="0 0 24 24" className="h-7 w-7 stroke-primary" strokeWidth="3" fill="none"><path d="M2 12h17m-7-7 7 7-7 7" /></svg>;
   return <svg viewBox="0 0 24 24" className="h-7 w-7 stroke-primary" strokeWidth="3"><path d="M2 12h20" /></svg>;
 }
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -887,7 +976,7 @@ function ShapeProperties({ o, f, set, commit, onPickColor }: { o: Obj; f: Fab; s
   );
 }
 
-function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; onPickColor?: (() => Promise<string | null>) | undefined; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
+function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; onPickColor?: (() => Promise<string | null>) | undefined; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void; group: () => void; ungroup: () => void; align: (edge: "left" | "centerX" | "right" | "top" | "centerY" | "bottom") => void } }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o instanceof f.IText || o instanceof f.Textbox || o instanceof f.FabricText;
   const isImg = o instanceof f.FabricImage;
@@ -920,7 +1009,16 @@ function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { 
         <IconBtn label="Bring forward" onClick={() => actions.order("up")}><ArrowUp /></IconBtn>
         <IconBtn label="Send backward" onClick={() => actions.order("down")}><ArrowDown /></IconBtn>
         <IconBtn label="Flip horizontal" onClick={() => set({ flipX: !o.flipX })}><FlipHorizontal /></IconBtn>
-        <IconBtn label="Lock" onClick={() => actions.toggleLock(o)}><Lock /></IconBtn>
+        <IconBtn label="Flip vertical" onClick={() => set({ flipY: !o.flipY })}><FlipVertical /></IconBtn>
+        <IconBtn label="Align left to canvas" onClick={() => actions.align("left")}><AlignHorizontalJustifyStart /></IconBtn>
+        <IconBtn label="Center horizontally on canvas" onClick={() => actions.align("centerX")}><AlignHorizontalJustifyCenter /></IconBtn>
+        <IconBtn label="Align right to canvas" onClick={() => actions.align("right")}><AlignHorizontalJustifyEnd /></IconBtn>
+        <IconBtn label="Align top to canvas" onClick={() => actions.align("top")}><AlignVerticalJustifyStart /></IconBtn>
+        <IconBtn label="Center vertically on canvas" onClick={() => actions.align("centerY")}><AlignVerticalJustifyCenter /></IconBtn>
+        <IconBtn label="Align bottom to canvas" onClick={() => actions.align("bottom")}><AlignVerticalJustifyEnd /></IconBtn>
+        {o.type === "activeselection" && <IconBtn label="Group selected objects" onClick={actions.group}><GroupIcon /></IconBtn>}
+        {o.type === "group" && <IconBtn label="Ungroup selected objects" onClick={actions.ungroup}><Ungroup /></IconBtn>}
+        <IconBtn label={o.lockedLayer ? "Unlock" : "Lock"} onClick={() => actions.toggleLock(o)}>{o.lockedLayer ? <Unlock /> : <Lock />}</IconBtn>
         <IconBtn label="Delete" className="text-destructive" onClick={actions.del}><Trash2 /></IconBtn>
       </div>
 
@@ -1059,7 +1157,7 @@ function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { 
 }
 
 type EditMode = "textTools" | "position" | "fill" | "stroke" | "effects";
-function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onPickColor, onMaskImage }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; eraseBusy: string | null; onEraseBackground: (mode: "smart" | "auto" | "color", color?: string, tolerance?: number) => void; onPickColor: () => Promise<string | null>; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle" | "star" | "heart" | "polygon") => void }) {
+function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onPickColor, onMaskImage, onAlign }: { o: Obj; f: Fab; mode: EditMode; commit: () => void; eraseBusy: string | null; onEraseBackground: (mode: "smart" | "auto" | "color", color?: string, tolerance?: number) => void; onPickColor: () => Promise<string | null>; onMaskImage: (shape: "square" | "circle" | "rounded" | "triangle" | "star" | "heart" | "polygon") => void; onAlign: (edge: "left" | "centerX" | "right" | "top" | "centerY" | "bottom") => void }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o.type === "textbox" || o.type === "i-text" || o.type === "text";
   const fillAlpha = alphaOf(o.fill), strokeAlpha = alphaOf(o.stroke);
@@ -1083,15 +1181,22 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onP
       <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
       <IconBtn label="Italic" active={o.fontStyle === "italic"} onClick={() => set({ fontStyle: o.fontStyle === "italic" ? "normal" : "italic" })}><Italic /></IconBtn>
       <button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ underline: !o.underline })}>Underline</button>
+      <button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ linethrough: !o.linethrough })}>Strikethrough</button>
       <IconBtn label="Align left" onClick={() => set({ textAlign: "left" })}><AlignLeft /></IconBtn><IconBtn label="Align center" onClick={() => set({ textAlign: "center" })}><AlignCenter /></IconBtn><IconBtn label="Align right" onClick={() => set({ textAlign: "right" })}><AlignRight /></IconBtn>
     </div>
+    <div className="grid grid-cols-2 gap-2"><button className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => set({ text: String(o.text ?? "").split("\n").map((line: string) => line.startsWith("• ") ? line : `• ${line}`).join("\n") })}>Add bullets</button><button className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => set({ text: String(o.text ?? "").split("\n").map((line: string, i: number) => `${i + 1}. ${line.replace(/^\d+\.\s*/, "")}`).join("\n") })}>Numbered list</button></div>
+    <Slider label="Letter spacing" value={o.charSpacing ?? 0} min={-200} max={1000} onChange={(v) => set({ charSpacing: v })} />
+    <Slider label="Line spacing" value={o.lineHeight ?? 1.16} min={0.5} max={3} step={0.05} onChange={(v) => set({ lineHeight: v })} />
+    <Color label="Text background" value={toHex(o.backgroundColor, "#fff3a3")} onChange={(v) => set({ backgroundColor: v })} />
   </Section>;
   if (mode === "position") return <Section title="Position & size">
+    <div className="flex flex-wrap items-center gap-1"><span className="mr-1 text-[11px] text-muted-foreground">Align to canvas</span><IconBtn label="Align left" onClick={() => onAlign("left")}><AlignHorizontalJustifyStart /></IconBtn><IconBtn label="Center horizontally" onClick={() => onAlign("centerX")}><AlignHorizontalJustifyCenter /></IconBtn><IconBtn label="Align right" onClick={() => onAlign("right")}><AlignHorizontalJustifyEnd /></IconBtn><IconBtn label="Align top" onClick={() => onAlign("top")}><AlignVerticalJustifyStart /></IconBtn><IconBtn label="Center vertically" onClick={() => onAlign("centerY")}><AlignVerticalJustifyCenter /></IconBtn><IconBtn label="Align bottom" onClick={() => onAlign("bottom")}><AlignVerticalJustifyEnd /></IconBtn></div>
     <div className="mx-auto grid w-28 grid-cols-3 gap-1"><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(0, -1)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowUp className="mx-auto h-4 w-4" /></button><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(-1, 0)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowLeft className="mx-auto h-4 w-4" /></button><span className="flex items-center justify-center text-[10px] text-muted-foreground">1px</span><button className="rounded border border-border p-2" onPointerDown={() => startNudge(1, 0)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowRight className="mx-auto h-4 w-4" /></button><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(0, 1)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowDown className="mx-auto h-4 w-4" /></button><span /></div>
     <div className="grid grid-cols-2 gap-2"><NumberField label="X" value={o.left ?? 0} onChange={(v) => set({ left: v })} /><NumberField label="Y" value={o.top ?? 0} onChange={(v) => set({ top: v })} /></div>
     <div className="grid grid-cols-2 gap-2"><NumberField label="Width" value={o.getScaledWidth?.() ?? o.width ?? 0} onChange={(v) => set({ scaleX: v / Math.max(1, o.width ?? 1) })} /><NumberField label="Height" value={o.getScaledHeight?.() ?? o.height ?? 0} onChange={(v) => set({ scaleY: v / Math.max(1, o.height ?? 1) })} /></div>
     {isText && <NumberField label="Padding" value={o.padding ?? 0} onChange={(v) => set({ padding: v })} />}
     <Slider label="Rotation" value={o.angle ?? 0} min={-180} max={180} onChange={(v) => set({ angle: v })} /><Slider label="Opacity (%)" value={(o.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => set({ opacity: v / 100 })} />
+    <div className="flex gap-1"><IconBtn label="Flip horizontal" onClick={() => set({ flipX: !o.flipX })}><FlipHorizontal /></IconBtn><IconBtn label="Flip vertical" onClick={() => set({ flipY: !o.flipY })}><FlipVertical /></IconBtn><button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ angle: 0 })}>Reset rotation</button></div>
   </Section>;
   if (mode === "fill") return <Section title="Fill">
     <Slider label="Opacity (%)" value={fillAlpha * 100} min={0} max={100} onChange={(v) => set({ fill: withAlpha(o.fill, v / 100) })} />
@@ -1105,9 +1210,51 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onP
   </Section>;
   return <Section title="Effects">
     {o.type === "image" && <><p className="text-xs font-semibold">Background eraser</p><div className="flex gap-1 text-xs">{([["smart", "Smart AI"], ["auto", "Edges"], ["color", "Colour"]] as const).map(([k, l]) => <button key={k} disabled={!!eraseBusy} className={`flex-1 rounded-md py-1.5 ${eraseMode === k ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode(k)}>{l}</button>)}</div><p className="text-[11px] text-muted-foreground">{eraseMode === "smart" ? "Best for people, products and pets. Detects the subject and removes everything else." : eraseMode === "auto" ? "Removes the plain background touching the photo edges." : "Removes one colour everywhere in the photo."}</p>{eraseMode === "color" && <div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button type="button" className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={async () => { const c = await onPickColor(); if (c) setEraseColor(c); }}>Pick from canvas</button></div>}{eraseMode !== "smart" && <Slider label="Strength" value={eraseTol} min={0} max={100} onChange={setEraseTol} />}<button disabled={!!eraseBusy} className="w-full rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60" onClick={() => onEraseBackground(eraseMode, eraseColor, eraseTol)}>{eraseBusy ?? "Erase background"}</button><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
+    {o.type === "image" && <ImageFilters key={o.canvas?.getObjects?.().indexOf(o) ?? "selected-image"} o={o} f={f} commit={commit} />}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
     {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => { const depth = e.target.checked ? 10 : 0; set({ text3dDepth: depth, shadow: e.target.checked ? new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: depth, offsetY: depth }) : null }); }} /> 3D text</label>{Number(o.text3dDepth ?? 0) > 0 && <Slider label="3D depth" value={Number(o.text3dDepth)} min={1} max={40} onChange={(v) => set({ text3dDepth: v, shadow: new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: v, offsetY: v }) })} />}<label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
+  </Section>;
+}
+
+function ImageFilters({ o, f, commit }: { o: Obj; f: Fab; commit: () => void }) {
+  type FilterOptions = Record<string, unknown>;
+  type FilterConstructor = new (options?: FilterOptions) => Obj;
+  const filters = f.filters as unknown as Record<string, FilterConstructor>;
+  const existing = (name: string, property: string) => Number((o.filters ?? []).find((filter: Obj) => filter.type === name)?.[property] ?? 0);
+  const replaceFilter = (name: string, property: string, value: number) => {
+    const next = (o.filters ?? []).filter((filter: Obj) => filter.type !== name);
+    if (value !== 0) {
+      const Constructor = filters[name];
+      if (Constructor) next.push(new Constructor({ [property]: value }));
+    }
+    o.filters = next;
+    o.applyFilters();
+    commit();
+  };
+  const preset = (name: "Original" | "Mono" | "Sepia" | "Vintage") => {
+    const presetName = name === "Mono" ? "Grayscale" : name;
+    const PresetFilter = name === "Original" ? undefined : filters[presetName];
+    o.filters = PresetFilter ? [new PresetFilter()] : [];
+    o.applyFilters();
+    commit();
+  };
+  const sharpen = () => {
+    const next = (o.filters ?? []).filter((filter: Obj) => filter.type !== "Convolute");
+    const SharpenFilter = filters["Convolute"];
+    if (!next.some((filter: Obj) => filter.type === "Convolute") && SharpenFilter) next.push(new SharpenFilter({ matrix: [0, -1, 0, -1, 5, -1, 0, -1, 0] }));
+    o.filters = next;
+    o.applyFilters();
+    commit();
+  };
+  return <Section title="Image filters & adjustments">
+    <div className="grid grid-cols-4 gap-1">{(["Original", "Mono", "Sepia", "Vintage"] as const).map((name) => <button key={name} className="rounded-md border border-border px-1 py-1.5 text-[11px] hover:bg-muted" onClick={() => preset(name)}>{name}</button>)}</div>
+    <Slider label="Brightness" value={existing("Brightness", "brightness")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Brightness", "brightness", v)} />
+    <Slider label="Contrast" value={existing("Contrast", "contrast")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Contrast", "contrast", v)} />
+    <Slider label="Saturation" value={existing("Saturation", "saturation")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Saturation", "saturation", v)} />
+    <Slider label="Blur" value={existing("Blur", "blur")} min={0} max={0.5} step={0.01} onChange={(v) => replaceFilter("Blur", "blur", v)} />
+    <Slider label="Temperature / tint" value={existing("HueRotation", "rotation")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("HueRotation", "rotation", v)} />
+    <button className="w-full rounded-md border border-border py-1.5 text-xs hover:bg-muted" onClick={sharpen}>Sharpen image</button>
   </Section>;
 }
 
@@ -1121,6 +1268,9 @@ function DesignEdit({ c, commit }: { c: Obj; commit: () => void }) {
     <Slider label="Blur" value={a.blur} min={0} max={30} step={0.5} onChange={v => set("blur", v)} />
     <Slider label="Grain" value={a.grain} min={0} max={100} onChange={v => set("grain", v)} />
     <Slider label="Warmth" value={a.warmth} min={0} max={100} onChange={v => set("warmth", v)} />
+    <Slider label="Highlights" value={a.highlights} min={-100} max={100} onChange={v => set("highlights", v)} />
+    <Slider label="Shadows" value={a.shadows} min={-100} max={100} onChange={v => set("shadows", v)} />
+    <Slider label="Vignette" value={a.vignette} min={0} max={100} onChange={v => set("vignette", v)} />
     <Button variant="outline" className="mt-3 w-full" onClick={() => { c.designAdjustments = { ...DEFAULT_ADJUSTMENTS }; commit(); }}><RotateCcw /> Reset adjustments</Button>
   </Section>;
 }
