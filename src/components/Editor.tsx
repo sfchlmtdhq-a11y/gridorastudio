@@ -5,7 +5,7 @@ import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
   Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Grid2X2,
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil, Sparkles, Send,
-  Group as GroupIcon, Ungroup, Frame, Grid3X3, Paintbrush, Heading, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, FolderOpen, WandSparkles,
+  Group as GroupIcon, Ungroup, Frame, Grid3X3, Paintbrush, Heading, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, FolderOpen, WandSparkles, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, listProjects, saveProject, deleteProject, type Project } from "@/lib/projects";
@@ -59,8 +59,10 @@ export function Editor({ id }: { id: string }) {
   const [missing, setMissing] = useState(false);
   const [zoom, setZoomState] = useState(1);
   const zoomRef = useRef(1);
+  const preferredZoomRef = useRef(1);
   const [tab, setTab] = useState<Tab>("bg");
   const [panelOpen, setPanelOpen] = useState(false);
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const [hand, setHand] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [saved, setSaved] = useState(true);
@@ -101,11 +103,12 @@ export function Editor({ id }: { id: string }) {
   }, [tab, panelOpen]);
   const closeVirtualKeyboard = () => { const element = document.activeElement; if (element instanceof HTMLElement && element !== document.body) element.blur(); };
 
-  const applyZoom = useCallback((z: number) => {
+  const applyZoom = useCallback((z: number, remember = true) => {
     const c = fc.current;
     if (!c) return;
     z = Math.min(4, Math.max(0.05, z));
     zoomRef.current = z;
+    if (remember) preferredZoomRef.current = z;
     c.setZoom(z);
     c.setDimensions({ width: W() * z, height: H() * z });
     setZoomState(z);
@@ -115,8 +118,40 @@ export function Editor({ id }: { id: string }) {
     const el = wrapRef.current;
     if (!el || !proj.current) return;
     const z = Math.min((el.clientWidth - 48) / W(), (el.clientHeight - 48) / H());
-    applyZoom(z);
+    preferredZoomRef.current = z;
+    applyZoom(z, false);
   }, [applyZoom]);
+
+  const resizeCanvasViewport = useCallback(() => {
+    const el = wrapRef.current;
+    if (!el || !proj.current || !fc.current) return;
+    const fitScale = Math.min((el.clientWidth - 48) / W(), (el.clientHeight - 48) / H());
+    const nextZoom = Math.min(preferredZoomRef.current, fitScale);
+    applyZoom(nextZoom, false);
+    requestAnimationFrame(() => {
+      const c = fc.current, canvas = canvasEl.current, workspace = wrapRef.current;
+      if (!c || !canvas || !workspace) return;
+      const selected = c.getActiveObject();
+      if (!selected) { workspace.scrollLeft = Math.max(0, (canvas.offsetWidth - workspace.clientWidth) / 2); workspace.scrollTop = Math.max(0, (canvas.offsetHeight - workspace.clientHeight) / 2); return; }
+      const bounds = selected.getBoundingRect?.();
+      const canvasRect = canvas.getBoundingClientRect(), workspaceRect = workspace.getBoundingClientRect();
+      if (!bounds) return;
+      const targetX = canvasRect.left + (bounds.left + bounds.width / 2) * zoomRef.current;
+      const targetY = canvasRect.top + (bounds.top + bounds.height / 2) * zoomRef.current;
+      workspace.scrollLeft += targetX - (workspaceRect.left + workspace.clientWidth / 2);
+      workspace.scrollTop += targetY - (workspaceRect.top + workspace.clientHeight / 2);
+    });
+  }, [applyZoom]);
+
+  useEffect(() => {
+    if (!ready) return;
+    let frame = 0;
+    const update = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(resizeCanvasViewport); };
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    update();
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", update); window.removeEventListener("orientationchange", update); };
+  }, [ready, panelOpen, panelExpanded, resizeCanvasViewport]);
 
   const persist = useCallback(async () => {
     const c = fc.current, p = proj.current;
@@ -946,7 +981,7 @@ export function Editor({ id }: { id: string }) {
               if (target) { force(); setContextMenu({ x: Math.max(8, Math.min(event.clientX, window.innerWidth - 220)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - Math.min(500, window.innerHeight * 0.75))) }); }
               else setContextMenu(null);
             }}
-            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(46vh+9rem)] md:bottom-0 md:left-[320px]" : "bottom-36 md:bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? panelExpanded ? "bottom-[38dvh] md:bottom-0 md:left-[320px]" : "bottom-[26dvh] md:bottom-0 md:left-[320px]" : "bottom-36 md:bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
           >
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
               <div className={`checker relative shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
@@ -990,8 +1025,8 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-36 z-40 h-[46vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:inset-x-auto md:bottom-0 md:left-20 md:top-14 md:h-auto md:w-[320px] md:rounded-none md:rounded-r-xl md:border-b-0 md:border-l md:border-t-0 md:shadow-xl`}>
-          <div className="flex min-w-0 items-center gap-1 border-b border-border p-2">
+        <aside id="mobile-editor-panel" aria-label="Editing tools" className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-36 z-40 ${panelExpanded ? "h-[38dvh]" : "h-[26dvh]"} max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur transition-[height] duration-200 md:inset-x-auto md:bottom-0 md:left-20 md:top-14 md:h-auto md:w-[320px] md:rounded-none md:rounded-r-xl md:border-b-0 md:border-l md:border-t-0 md:shadow-xl`}>
+          <div className="flex min-w-0 shrink-0 items-center gap-1 border-b border-border p-2">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
             {contextualTabs.map((t) => (
               <Button variant="ghost" size="sm" key={t} title={tabLabel[t]} aria-label={tabLabel[t]} onClick={() => setTab(t)} className={`min-w-0 basis-[calc(33.333%-0.25rem)] justify-center px-1 text-[10px] leading-tight md:basis-auto md:px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
@@ -999,7 +1034,10 @@ export function Editor({ id }: { id: string }) {
               </Button>
             ))}
             </div>
-            <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
+            <div className="ml-auto flex shrink-0 items-center gap-1 md:hidden">
+              <button className="rounded p-1.5 hover:bg-muted" aria-controls="mobile-editor-panel" aria-expanded={panelExpanded} aria-label={panelExpanded ? "Shrink editing panel" : "Expand editing panel"} title={panelExpanded ? "Compact panel" : "Expand panel"} onClick={() => setPanelExpanded((value) => !value)}>{panelExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}</button>
+              <button className="rounded p-1.5 hover:bg-muted" aria-label="Minimize editing panel" title="Minimize panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
+            </div>
           </div>
           <div ref={panelContentRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-3 sm:p-4">
             {ready && tab === "add" && (
@@ -1186,9 +1224,19 @@ function Color({ label, value, onChange, onPick }: { label: string; value: strin
   const [palette, setPalette] = useState<string[]>(() => { if (typeof window === "undefined") return []; try { return JSON.parse(window.localStorage.getItem("gridora-color-palette") || "[]") as string[]; } catch { return []; } });
   useEffect(() => setDraft(value), [value]);
   const apply = (next: string) => { if (!/^#[0-9a-f]{6}$/i.test(next)) return; setDraft(next); onChange(next); const colors = [next.toLowerCase(), ...palette.filter((x) => x.toLowerCase() !== next.toLowerCase())].slice(0, 24); setPalette(colors); rememberPaletteColor(next); };
-  return <div className="space-y-1 text-xs text-muted-foreground"><div className="flex items-center gap-2"><span className="min-w-0 flex-1">{label}</span><input type="color" value={toHex(draft, "#000000")} onChange={(e) => apply(e.target.value)} className="h-8 w-10 cursor-pointer rounded border border-border bg-transparent" /><input className="field h-8 w-24 px-2 text-[11px] uppercase" value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={() => apply(draft)} placeholder="#000000" aria-label={`${label} hex code`} />{onPick && <button type="button" className="rounded border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={async () => { const picked = await onPick(); if (picked) apply(picked); }}>Pick</button>}</div>{palette.length > 0 && <div className="flex flex-wrap gap-1" aria-label="Saved colours">{palette.map((color) => <button type="button" key={color} title={color} aria-label={`Use saved colour ${color}`} className="h-5 w-5 rounded-full border border-border" style={{ backgroundColor: color }} onClick={() => apply(color)} />)}</div>}</div>;
+  const editHex = (next: string) => { setDraft(next); if (/^#[0-9a-f]{6}$/i.test(next)) apply(next); };
+  const finishHex = () => { if (/^#[0-9a-f]{6}$/i.test(draft)) apply(draft); else setDraft(value); };
+  return <div className="min-w-0 space-y-1 text-xs text-muted-foreground"><span className="block min-w-0">{label}</span><div className="flex min-w-0 items-center gap-2"><input type="color" aria-label={`${label} color picker`} value={toHex(draft, "#000000")} onChange={(e) => apply(e.target.value)} className="h-9 w-11 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0.5" /><input className="field h-9 min-w-0 flex-1 px-2 text-[11px] uppercase" value={draft} onChange={(e) => editHex(e.target.value)} onBlur={finishHex} placeholder="#000000" aria-label={`${label} hex code`} />{onPick && <button type="button" className="min-h-9 shrink-0 rounded border border-border px-3 py-1.5 text-[11px] hover:bg-muted" onClick={async () => { const picked = await onPick(); if (picked) apply(picked); }}>Pick</button>}</div>{palette.length > 0 && <div className="flex flex-wrap gap-1" aria-label="Saved colours">{palette.map((color) => <button type="button" key={color} title={color} aria-label={`Use saved colour ${color}`} className="h-5 w-5 rounded-full border border-border" style={{ backgroundColor: color }} onClick={() => apply(color)} />)}</div>}</div>;
 }
-const toHex = (v: unknown, d = "#000000") => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v : d);
+const toHex = (v: unknown, d = "#000000") => {
+  if (typeof v === "string") {
+    if (/^#[0-9a-f]{6}$/i.test(v)) return v;
+    const rgb = v.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (rgb) return `#${rgb.slice(1, 4).map((channel) => Math.max(0, Math.min(255, Number(channel))).toString(16).padStart(2, "0")).join("")}`;
+  }
+  if (v && typeof v === "object" && Array.isArray((v as Obj).colorStops)) return toHex((v as Obj).colorStops[0]?.color, d);
+  return d;
+};
 const alphaOf = (v: unknown) => {
   if (typeof v !== "string") return 1;
   const match = v.match(/^rgba?\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)$/i);
@@ -1525,16 +1573,18 @@ function ImageFilters({ o, f, commit }: { o: Obj; f: Fab; commit: () => void }) 
     o.applyFilters();
     commit();
   };
-  const duotone = () => {
+  const applyDuotone = (color: string, alpha: number) => {
     const Gray = filters["Grayscale"], Blend = filters["BlendColor"];
     if (!Gray || !Blend) return;
-    o.filters = [new Gray(), new Blend({ color: duotoneColor, mode: "tint", alpha: duotoneStrength })];
+    o.filters = [new Gray(), new Blend({ color, mode: "tint", alpha })];
     o.applyFilters(); commit();
   };
+  const duotoneActive = (o.filters ?? []).some((filter: Obj) => filter.type === "BlendColor");
+  const duotone = () => applyDuotone(duotoneColor, duotoneStrength);
   return <Section title="Color effects & image filters">
     <div className="grid grid-cols-5 gap-1">{(["Original", "Mono", "Sepia", "Vintage"] as const).map((name) => <button key={name} className="rounded-md border border-border px-1 py-1.5 text-[11px] hover:bg-muted" onClick={() => preset(name)}>{name}</button>)}<button className="rounded-md border border-border px-1 py-1.5 text-[11px] hover:bg-muted" onClick={duotone}>Duotone</button></div>
-    <Color label="Duotone tint" value={duotoneColor} onChange={setDuotoneColor} />
-    <Slider label="Duotone strength" value={duotoneStrength} min={0} max={1} step={0.01} onChange={setDuotoneStrength} />
+    <Color label="Duotone tint" value={duotoneColor} onChange={(color) => { setDuotoneColor(color); if (duotoneActive) applyDuotone(color, duotoneStrength); }} />
+    <Slider label="Duotone strength" value={duotoneStrength} min={0} max={1} step={0.01} onChange={(strength) => { setDuotoneStrength(strength); if (duotoneActive) applyDuotone(duotoneColor, strength); }} />
     <Slider label="Brightness" value={existing("Brightness", "brightness")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Brightness", "brightness", v)} />
     <Slider label="Contrast" value={existing("Contrast", "contrast")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Contrast", "contrast", v)} />
     <Slider label="Saturation" value={existing("Saturation", "saturation")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Saturation", "saturation", v)} />
@@ -1564,16 +1614,17 @@ function ColorTools({ c, f, selected, commit, onPickColor }: { c: Obj; f: Fab; s
   const [target, setTarget] = useState<"fill" | "stroke" | "background">("fill");
   const [gradient, setGradient] = useState({ a: "#0f172a", b: "#c6f432", angle: 45 });
   const colors = colorsInDocument(c);
-  const base = target === "background" || !selected ? toHex(c.backgroundColor, "#ffffff") : toHex(selected[target], "#111111");
+  const effectiveTarget = selected ? target : "background";
+  const base = effectiveTarget === "background" ? toHex(c.backgroundColor, "#ffffff") : toHex(selected?.[effectiveTarget], "#111111");
   const apply = (color: string) => {
-    if (target === "background" || !selected) { c.backgroundImage = undefined; c.backgroundColor = color; }
-    else if (target === "fill") selected.set({ fill: withAlpha(color, alphaOf(selected.fill)) });
-    else selected.set({ stroke: color, strokeWidth: selected.strokeWidth || 2 });
-    c.requestRenderAll(); commit();
+    if (effectiveTarget === "background") { c.backgroundImage = undefined; c.backgroundColor = color; }
+    else if (effectiveTarget === "fill" && selected) selected.set({ fill: withAlpha(color, alphaOf(selected.fill)) });
+    else if (selected) selected.set({ stroke: color, strokeWidth: selected.strokeWidth || 2 });
+    commit();
   };
-  const applyGradient = () => { c.backgroundImage = undefined; c.backgroundColor = makeGradient(f, gradient.a, gradient.b, gradient.angle, c.getWidth(), c.getHeight(), "pixels"); c.requestRenderAll(); commit(); };
+  const applyGradient = () => { c.backgroundImage = undefined; c.backgroundColor = makeGradient(f, gradient.a, gradient.b, gradient.angle, c.getWidth(), c.getHeight(), "pixels"); commit(); };
   return <div className="grid w-full max-w-5xl grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-    <Section title="Color picker"><div className="flex gap-1">{(["fill", "stroke", "background"] as const).map((kind) => <button key={kind} aria-pressed={target === kind} className={`flex-1 rounded-md border border-border px-2 py-1.5 text-xs capitalize ${target === kind ? "bg-muted text-foreground" : "text-muted-foreground"}`} onClick={() => setTarget(kind)}>{kind}</button>)}</div><Color label={target === "background" || !selected ? "Solid background color" : `${target} color`} value={base} onChange={apply} onPick={onPickColor} />{selected && <Slider label="Layer transparency (%)" value={(selected.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => { selected.set({ opacity: v / 100 }); selected.canvas?.requestRenderAll(); commit(); }} />}</Section>
+    <Section title="Color picker"><div className="flex gap-1">{(["fill", "stroke", "background"] as const).map((kind) => <button key={kind} aria-pressed={effectiveTarget === kind} disabled={!selected && kind !== "background"} className={`min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-xs capitalize disabled:cursor-not-allowed disabled:opacity-40 ${effectiveTarget === kind ? "bg-muted text-foreground" : "text-muted-foreground"}`} onClick={() => setTarget(kind)}>{kind}</button>)}</div><Color label={effectiveTarget === "background" ? "Canvas background color" : `${effectiveTarget} color`} value={base} onChange={apply} onPick={onPickColor} />{!selected && <p className="text-[11px] text-muted-foreground">No object selected — the background is being edited. Select an object to edit its fill or stroke.</p>}{selected && <Slider label="Layer transparency (%)" value={(selected.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => { selected.set({ opacity: v / 100 }); commit(); }} />}</Section>
     <Section title="Document colors">{colors.length === 0 ? <p className="text-xs text-muted-foreground">Add colors to the canvas to build this palette.</p> : <div className="flex flex-wrap gap-2">{colors.map((color) => <button key={color} type="button" title={color} aria-label={`Apply document color ${color}`} className="h-7 w-7 rounded-full border border-border shadow-sm" style={{ backgroundColor: color }} onClick={() => apply(color)} />)}</div>}<p className="text-[11px] text-muted-foreground">Colors sampled from this design's background, fills, outlines, and shadows.</p></Section>
     <Section title="Gradient colors"><Color label="Start color" value={gradient.a} onChange={(a) => setGradient({ ...gradient, a })} onPick={onPickColor} /><Color label="End color" value={gradient.b} onChange={(b) => setGradient({ ...gradient, b })} onPick={onPickColor} /><Slider label="Gradient angle" value={gradient.angle} min={0} max={360} onChange={(angle) => setGradient({ ...gradient, angle })} /><button className="w-full rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => { setTarget("background"); applyGradient(); }}>Apply gradient to background</button></Section>
   </div>;
