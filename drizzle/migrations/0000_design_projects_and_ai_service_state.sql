@@ -1,0 +1,15 @@
+CREATE TABLE public.projects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL, name text NOT NULL DEFAULT 'Untitled design', width integer NOT NULL DEFAULT 1080 CHECK(width BETWEEN 50 AND 5000), height integer NOT NULL DEFAULT 1080 CHECK(height BETWEEN 50 AND 5000), background text NOT NULL DEFAULT '#ffffff', canvas_json jsonb, thumbnail_path text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.projects TO authenticated;
+GRANT ALL ON public.projects TO service_role;
+ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage their designs" ON public.projects FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+CREATE INDEX projects_user_updated_idx ON public.projects(user_id, updated_at DESC);
+CREATE FUNCTION public.touch_design_updated_at() RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$ BEGIN NEW.updated_at = now(); RETURN NEW; END $$;
+CREATE TRIGGER touch_design_updated_at BEFORE UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.touch_design_updated_at();
+CREATE TABLE public.ai_service_state (service text PRIMARY KEY, status integer NOT NULL, message text NOT NULL, blocked_at timestamptz NOT NULL DEFAULT now());
+GRANT ALL ON public.ai_service_state TO service_role;
+ALTER TABLE public.ai_service_state ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users upload own design assets" ON storage.objects FOR INSERT TO authenticated WITH CHECK(bucket_id = 'design-assets' AND (storage.foldername(name))[1] = auth.uid()::text);
+CREATE POLICY "Users read own design assets" ON storage.objects FOR SELECT TO authenticated USING(bucket_id = 'design-assets' AND (storage.foldername(name))[1] = auth.uid()::text);
+CREATE POLICY "Users update own design assets" ON storage.objects FOR UPDATE TO authenticated USING(bucket_id = 'design-assets' AND (storage.foldername(name))[1] = auth.uid()::text) WITH CHECK(bucket_id = 'design-assets' AND (storage.foldername(name))[1] = auth.uid()::text);
+CREATE POLICY "Users delete own design assets" ON storage.objects FOR DELETE TO authenticated USING(bucket_id = 'design-assets' AND (storage.foldername(name))[1] = auth.uid()::text);

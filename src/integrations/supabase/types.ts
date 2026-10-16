@@ -14,7 +14,66 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      ai_service_state: {
+        Row: {
+          blocked_at: string
+          message: string
+          service: string
+          status: number
+        }
+        Insert: {
+          blocked_at?: string
+          message: string
+          service: string
+          status: number
+        }
+        Update: {
+          blocked_at?: string
+          message?: string
+          service?: string
+          status?: number
+        }
+        Relationships: []
+      }
+      projects: {
+        Row: {
+          background: string
+          canvas_json: Json | null
+          created_at: string
+          height: number
+          id: string
+          name: string
+          thumbnail_path: string | null
+          updated_at: string
+          user_id: string
+          width: number
+        }
+        Insert: {
+          background?: string
+          canvas_json?: Json | null
+          created_at?: string
+          height?: number
+          id?: string
+          name?: string
+          thumbnail_path?: string | null
+          updated_at?: string
+          user_id: string
+          width?: number
+        }
+        Update: {
+          background?: string
+          canvas_json?: Json | null
+          created_at?: string
+          height?: number
+          id?: string
+          name?: string
+          thumbnail_path?: string | null
+          updated_at?: string
+          user_id?: string
+          width?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
