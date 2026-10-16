@@ -4,3 +4,6 @@
 - [x] Add confirmation for transparent canvas background.
 - [x] Create a distinctive colorful font picker.
 - [x] Verify mobile and desktop editing, saving and export.
+- [ ] Redesign editor tabs for accessible mobile, tablet and desktop use.
+- [ ] Expand and repair the assistant with attachments, image creation/editing and richer canvas changes.
+- [ ] Test real AI requests and editing flows; report configuration blockers.
