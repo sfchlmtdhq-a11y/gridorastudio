@@ -44,6 +44,7 @@ export function Editor({ id }: { id: string }) {
   const nav = useNavigate();
   const canvasEl = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const panelContentRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const backgroundFileRef = useRef<HTMLInputElement>(null);
   const tapRef = useRef<{ target: Obj | null; count: number }>({ target: null, count: 0 });
@@ -92,6 +93,12 @@ export function Editor({ id }: { id: string }) {
   const H = () => proj.current?.height ?? 1;
   snapAlignRef.current = snapAlign;
   guidesRef.current = guides;
+  useEffect(() => {
+    const panel = panelContentRef.current;
+    if (!panel || !panelOpen) return;
+    panel.scrollLeft = 0;
+    panel.scrollTop = 0;
+  }, [tab, panelOpen]);
   const closeVirtualKeyboard = () => { const element = document.activeElement; if (element instanceof HTMLElement && element !== document.body) element.blur(); };
 
   const applyZoom = useCallback((z: number) => {
@@ -949,7 +956,7 @@ export function Editor({ id }: { id: string }) {
             </div>
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
-          <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
+          <div ref={panelContentRef} className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto overscroll-contain scroll-smooth p-4">
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} onPickColor={pickColorFromCanvas} mode="legacy" actions={{ dup, del, order, toggleLock, group: groupSelection, ungroup: ungroupSelection, align: alignToCanvas }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
             {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(mode, color, tol) => { void eraseImageBackground(mode, color, tol); }} eraseBusy={eraseBusy} onPickColor={pickColorFromCanvas} onMaskImage={maskImage} onAlign={alignToCanvas} />}
             {ready && tab === "position" && !o && <p className="text-sm text-muted-foreground">Select an object to position, resize, rotate, flip, or align it to the canvas.</p>}
