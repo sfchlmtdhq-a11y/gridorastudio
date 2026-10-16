@@ -195,6 +195,42 @@ type Tab =
   | "vector";
 type DrawingTool = "pen" | "freehand" | "brush" | "eraser" | "line" | "highlighter" | null;
 type Guide = { axis: "x" | "y"; value: number };
+type AiProposal = {
+  prompt: string;
+  reply: string;
+  actions: GeminiAction[];
+  status: "suggested" | "preview";
+};
+const describeAiAction = (action: GeminiAction) => {
+  switch (action.type) {
+    case "addText":
+      return `Add text: “${action.text}”`;
+    case "addIcon":
+      return `Add a ${action.icon.toLowerCase()} icon`;
+    case "addShape":
+      return `Add a ${action.shape} shape`;
+    case "updateSelected": {
+      const properties = Object.keys(action).filter(
+        (key) => !["type", "targetIndex", "targetName"].includes(key),
+      );
+      return `Adjust ${action.targetName || (action.targetIndex !== undefined ? `object ${action.targetIndex + 1}` : "selected object")}: ${properties.join(", ") || "style"}`;
+    }
+    case "deleteSelected":
+      return `Remove ${action.targetName || (action.targetIndex !== undefined ? `object ${action.targetIndex + 1}` : "the selected object")}`;
+    case "duplicateSelected":
+      return `Duplicate ${action.targetName || (action.targetIndex !== undefined ? `object ${action.targetIndex + 1}` : "the selected object")}`;
+    case "moveSelected":
+      return `Move ${action.targetName || (action.targetIndex !== undefined ? `object ${action.targetIndex + 1}` : "the selected object")}`;
+    case "setOrder":
+      return `Move ${action.targetName || (action.targetIndex !== undefined ? `object ${action.targetIndex + 1}` : "the selected object")} ${action.direction}`;
+    case "alignSelected":
+      return `Align ${action.targetName || (action.targetIndex !== undefined ? `object ${action.targetIndex + 1}` : "the selected object")} ${action.alignment}`;
+    case "arrange":
+      return `Arrange objects ${action.alignment ?? "horizontally"}`;
+    case "setBackground":
+      return "Change the canvas background";
+  }
+};
 
 export function Editor({ id }: { id: string }) {
   const nav = useNavigate();
@@ -214,6 +250,8 @@ export function Editor({ id }: { id: string }) {
   const objectClipboard = useRef<Obj>(null);
   const proj = useRef<Project | null>(null);
   const hist = useRef({ stack: [] as string[], i: -1, lock: false });
+  const aiPreviewActive = useRef(false);
+  const aiPreviewBefore = useRef<string | null>(null);
   const timers = useRef<{ snap?: number; save?: number }>({});
   const [, force] = useReducer((x: number) => x + 1, 0);
   const [ready, setReady] = useState(false);
@@ -273,8 +311,41 @@ export function Editor({ id }: { id: string }) {
   const [aiMessages, setAiMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>(
     [],
   );
+  const [aiProposal, setAiProposal] = useState<AiProposal | null>(null);
+  const aiPanelRef = useRef<HTMLElement | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const askAssistant = useServerFn(askGeminiDesignAssistant);
+
+  useEffect(() => {
+    if (aiProposal?.status !== "preview") return;
+    const panel = aiPanelRef.current;
+    if (!panel) return;
+    panel.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const controls = panel.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled)",
+      );
+      const first = controls.item(0);
+      const last = controls.item(controls.length - 1);
+      if (!first || !last) return;
+      if (!panel.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (
+        event.shiftKey &&
+        (document.activeElement === first || document.activeElement === panel)
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus, true);
+    return () => document.removeEventListener("keydown", trapFocus, true);
+  }, [aiProposal?.status]);
 
   const W = () => proj.current?.width ?? 1;
   const H = () => proj.current?.height ?? 1;
@@ -409,6 +480,7 @@ export function Editor({ id }: { id: string }) {
   const commit = useCallback(() => {
     fc.current?.requestRenderAll();
     force();
+    if (aiPreviewActive.current) return;
     clearTimeout(timers.current.snap);
     timers.current.snap = window.setTimeout(snapshot, 300);
     scheduleSave();
@@ -430,6 +502,7 @@ export function Editor({ id }: { id: string }) {
 
   const undo = useCallback(() => {
     const h = hist.current;
+    if (aiPreviewActive.current) return;
     if (h.i > 0) {
       h.i--;
       const s = h.stack[h.i];
@@ -438,6 +511,7 @@ export function Editor({ id }: { id: string }) {
   }, [restore]);
   const redo = useCallback(() => {
     const h = hist.current;
+    if (aiPreviewActive.current) return;
     if (h.i < h.stack.length - 1) {
       h.i++;
       const s = h.stack[h.i];
@@ -709,7 +783,7 @@ export function Editor({ id }: { id: string }) {
     c.defaultCursor = "crosshair";
     let points: VectorPoint[] = vectorDraftRef.current;
     let draggingPoint = -1;
-    let previewClosed = false;
+    const previewClosed = false;
     const setPoints = (next: VectorPoint[]) => {
       points = next;
       vectorDraftRef.current = next;
@@ -1753,7 +1827,7 @@ export function Editor({ id }: { id: string }) {
   };
   const runAssistant = async () => {
     const prompt = aiPrompt.trim();
-    if (!prompt || aiBusy || !fc.current) return;
+    if (!prompt || aiBusy || aiProposal || !fc.current) return;
     setAiPrompt("");
     setAiMessages((m) => [...m, { role: "user", text: prompt }]);
     setAiBusy(true);
@@ -1770,11 +1844,17 @@ export function Editor({ id }: { id: string }) {
               ? {
                   type: selected.type,
                   text: selected.text,
+                  fontSize: selected.fontSize,
+                  fontFamily: selected.fontFamily,
+                  fontWeight: selected.fontWeight,
+                  textAlign: selected.textAlign,
                   left: selected.left,
                   top: selected.top,
                   width: selected.getScaledWidth?.() ?? selected.width,
                   height: selected.getScaledHeight?.() ?? selected.height,
                   fill: typeof selected.fill === "string" ? selected.fill : undefined,
+                  stroke: typeof selected.stroke === "string" ? selected.stroke : undefined,
+                  strokeWidth: selected.strokeWidth,
                 }
               : null,
             objects: fc.current
@@ -1785,6 +1865,10 @@ export function Editor({ id }: { id: string }) {
                 type: x.type,
                 name: x.name,
                 text: x.text,
+                fontSize: x.fontSize,
+                fontFamily: x.fontFamily,
+                fontWeight: x.fontWeight,
+                textAlign: x.textAlign,
                 left: x.left,
                 top: x.top,
                 width: x.getScaledWidth?.() ?? x.width,
@@ -1792,12 +1876,22 @@ export function Editor({ id }: { id: string }) {
                 angle: x.angle,
                 opacity: x.opacity,
                 fill: typeof x.fill === "string" ? x.fill : undefined,
+                stroke: typeof x.stroke === "string" ? x.stroke : undefined,
+                strokeWidth: x.strokeWidth,
               })),
           },
         },
       });
-      for (const action of result.actions) await applyAiAction(action);
-      setAiMessages((m) => [...m, { role: "assistant", text: result.reply }]);
+      if (result.actions.length) {
+        setAiProposal({
+          prompt,
+          reply: result.reply,
+          actions: result.actions,
+          status: "suggested",
+        });
+      } else {
+        setAiMessages((m) => [...m, { role: "assistant", text: result.reply }]);
+      }
     } catch (error) {
       setAiMessages((m) => [
         ...m,
@@ -1812,6 +1906,72 @@ export function Editor({ id }: { id: string }) {
     } finally {
       setAiBusy(false);
     }
+  };
+  const previewAiProposal = async () => {
+    const proposal = aiProposal;
+    const c = fc.current;
+    if (!proposal || proposal.status !== "suggested" || !c || aiPreviewActive.current) return;
+
+    const before = JSON.stringify(c.toObject(PROPS));
+    clearTimeout(timers.current.snap);
+    clearTimeout(timers.current.save);
+    snapshot();
+    aiPreviewBefore.current = before;
+    aiPreviewActive.current = true;
+    setAiProposal({ ...proposal, status: "preview" });
+    try {
+      for (const action of proposal.actions) await applyAiAction(action);
+      c.requestRenderAll();
+    } catch (error) {
+      aiPreviewActive.current = false;
+      aiPreviewBefore.current = null;
+      await restore(before);
+      setAiProposal({ ...proposal, status: "suggested" });
+      setAiMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          text:
+            error instanceof Error
+              ? `The preview could not be completed; the canvas was restored. ${error.message}`
+              : "The preview could not be completed; the canvas was restored.",
+        },
+      ]);
+    }
+  };
+  const acceptAiProposal = () => {
+    if (!aiProposal || aiProposal.status !== "preview" || !aiPreviewActive.current) return;
+    clearTimeout(timers.current.snap);
+    aiPreviewActive.current = false;
+    aiPreviewBefore.current = null;
+    snapshot();
+    scheduleSave();
+    setAiProposal(null);
+    setAiMessages((m) => [
+      ...m,
+      {
+        role: "assistant",
+        text: "Design changes accepted. You can undo them with the editor's Undo button.",
+      },
+    ]);
+  };
+  const rejectAiProposal = async () => {
+    const before = aiPreviewBefore.current;
+    aiPreviewActive.current = false;
+    aiPreviewBefore.current = null;
+    clearTimeout(timers.current.snap);
+    clearTimeout(timers.current.save);
+    if (before) await restore(before);
+    setAiProposal(null);
+    setAiMessages((m) => [
+      ...m,
+      {
+        role: "assistant",
+        text: before
+          ? "Preview rejected; your original canvas is restored."
+          : "Suggestion dismissed.",
+      },
+    ]);
   };
   const toggleLock = (o: Obj) => {
     const l = !o.lockedLayer;
@@ -1828,13 +1988,21 @@ export function Editor({ id }: { id: string }) {
   // keyboard
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (aiPreviewActive.current) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          void rejectAiProposal();
+        }
+        return;
+      }
       const t = e.target as HTMLElement;
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
       if (active()?.isEditing) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        e.shiftKey ? redo() : undo();
+        if (e.shiftKey) redo();
+        else undo();
       } else if (mod && e.key.toLowerCase() === "y") {
         e.preventDefault();
         redo();
@@ -2438,15 +2606,26 @@ export function Editor({ id }: { id: string }) {
         </div>
       </header>
 
+      {aiProposal?.status === "preview" && (
+        <div className="fixed inset-0 z-40 cursor-not-allowed bg-background/5" aria-hidden="true" />
+      )}
       {aiOpen && (
-        <section className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96">
+        <section
+          ref={aiPanelRef}
+          role="dialog"
+          aria-label="AI Design Director"
+          aria-modal={aiProposal?.status === "preview"}
+          tabIndex={-1}
+          className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"
+        >
           <div className="flex items-center gap-2 border-b border-border p-3">
             <Sparkles className="h-4 w-4 text-primary" />
-            <h2 className="font-semibold">Design assistant</h2>
+            <h2 className="font-semibold">AI Design Director</h2>
             <button
-              className="ml-auto rounded p-1 hover:bg-muted"
+              className="ml-auto rounded p-1 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => setAiOpen(false)}
               aria-label="Close assistant"
+              disabled={aiProposal?.status === "preview"}
             >
               <X className="h-4 w-4" />
             </button>
@@ -2454,7 +2633,8 @@ export function Editor({ id }: { id: string }) {
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
             {aiMessages.length === 0 && (
               <p className="text-xs text-muted-foreground">
-                Ask me to add, edit, move, arrange, or style objects on your canvas.
+                Ask for a design review or a direct edit. I’ll explain suggested changes first;
+                nothing is applied until you preview and accept it.
               </p>
             )}
             {aiMessages.map((message, i) => (
@@ -2465,6 +2645,57 @@ export function Editor({ id }: { id: string }) {
                 {message.text}
               </div>
             ))}
+            {aiProposal && (
+              <div
+                className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-3"
+                aria-label="AI design proposal"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold">Design proposal</span>
+                  <span className="text-xs text-muted-foreground">
+                    {aiProposal.actions.length}{" "}
+                    {aiProposal.actions.length === 1 ? "change" : "changes"}
+                  </span>
+                </div>
+                <p className="text-sm leading-relaxed">{aiProposal.reply}</p>
+                <ol className="list-inside list-decimal space-y-1 text-xs text-muted-foreground">
+                  {aiProposal.actions.map((action, index) => (
+                    <li key={`${action.type}-${index}`}>{describeAiAction(action)}</li>
+                  ))}
+                </ol>
+                <p className="text-xs text-muted-foreground">
+                  {aiProposal.status === "preview"
+                    ? "Preview only — the canvas is not saved. Accept to keep these edits or reject to restore your original design."
+                    : "Your canvas is unchanged. Preview these edits before deciding."}
+                </p>
+                <div className="flex gap-2">
+                  {aiProposal.status === "suggested" ? (
+                    <button
+                      type="button"
+                      onClick={() => void previewAiProposal()}
+                      className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
+                    >
+                      Preview changes
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={acceptAiProposal}
+                      className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
+                    >
+                      Accept changes
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void rejectAiProposal()}
+                    className="rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted"
+                  >
+                    {aiProposal.status === "preview" ? "Reject & restore" : "Dismiss"}
+                  </button>
+                </div>
+              </div>
+            )}
             {aiBusy && <p className="text-xs text-muted-foreground">Working on your design…</p>}
           </div>
           <form
@@ -2478,13 +2709,13 @@ export function Editor({ id }: { id: string }) {
               className="field min-w-0 flex-1"
               value={aiPrompt}
               onChange={(e) => setAiPrompt(e.target.value)}
-              placeholder="Try: add a blue circle"
-              disabled={aiBusy}
+              placeholder="Ask for a design review…"
+              disabled={aiBusy || !!aiProposal}
             />
             <button
               className="rounded-lg bg-primary p-2 text-primary-foreground disabled:opacity-50"
-              disabled={aiBusy || !aiPrompt.trim()}
-              aria-label="Send command"
+              disabled={aiBusy || !!aiProposal || !aiPrompt.trim()}
+              aria-label="Ask the AI Design Director"
             >
               <Send className="h-4 w-4" />
             </button>
