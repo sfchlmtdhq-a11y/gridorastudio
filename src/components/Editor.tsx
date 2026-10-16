@@ -5,7 +5,7 @@ import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
   Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Grid2X2,
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil, Sparkles, Send,
-  Group as GroupIcon, Ungroup, Frame, Grid3X3, Paintbrush, Heading, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
+  Group as GroupIcon, Ungroup, Frame, Grid3X3, Paintbrush, Heading, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, FolderOpen, WandSparkles,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, listProjects, saveProject, deleteProject, type Project } from "@/lib/projects";
@@ -50,6 +50,7 @@ export function Editor({ id }: { id: string }) {
   const tapRef = useRef<{ target: Obj | null; count: number }>({ target: null, count: 0 });
   const fc = useRef<Obj>(null);
   const fab = useRef<Fab | null>(null);
+  const objectClipboard = useRef<Obj>(null);
   const proj = useRef<Project | null>(null);
   const hist = useRef({ stack: [] as string[], i: -1, lock: false });
   const timers = useRef<{ snap?: number; save?: number }>({});
@@ -85,6 +86,7 @@ export function Editor({ id }: { id: string }) {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiMessages, setAiMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const askAssistant = useServerFn(askGeminiDesignAssistant);
 
   const W = () => proj.current?.width ?? 1;
@@ -531,6 +533,24 @@ export function Editor({ id }: { id: string }) {
     c.setActiveObject(cl);
     c.requestRenderAll();
   };
+  const copyObject = async () => {
+    const o = active();
+    if (o) objectClipboard.current = await o.clone(PROPS);
+  };
+  const pasteObject = async () => {
+    const c = fc.current, source = objectClipboard.current;
+    if (!c || !source) return;
+    const pasted = await source.clone(PROPS);
+    pasted.set({ left: (source.left ?? W() / 2) + 30, top: (source.top ?? H() / 2) + 30 });
+    if (pasted.type === "activeselection" || pasted.type === "activeSelection") {
+      pasted.canvas = c;
+      pasted.forEachObject((child: Obj) => c.add(child));
+      pasted.setCoords();
+    } else c.add(pasted);
+    c.setActiveObject(pasted);
+    c.requestRenderAll();
+    commit();
+  };
   const order = (k: "up" | "down" | "top" | "bottom") => {
     const c = fc.current, o = active();
     if (!o) return;
@@ -679,6 +699,8 @@ export function Editor({ id }: { id: string }) {
       if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       else if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
       else if (mod && e.key.toLowerCase() === "d") { e.preventDefault(); dup(); }
+      else if (mod && e.key.toLowerCase() === "c") { e.preventDefault(); void copyObject(); }
+      else if (mod && e.key.toLowerCase() === "v") { e.preventDefault(); void pasteObject(); }
       else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); del(); }
     };
     window.addEventListener("keydown", onKey);
@@ -839,13 +861,17 @@ export function Editor({ id }: { id: string }) {
   ];
   const addTabs: Tab[] = ["add", "textTools", "textPresets", "shapes", "stickers", "icons", "frames", "grids", "decorations"];
   const mainTools: { icon: ReactNode; label: string; active: boolean; on: () => void }[] = [
-    { icon: <Plus />, label: "Add", active: addTabs.includes(tab), on: () => openTab("add") },
-    { icon: <PaintBucket />, label: "Color", active: ["colors", "fill", "stroke"].includes(tab), on: () => openTab("colors") },
+    { icon: <Grid2X2 />, label: "Design", active: tab === "edit", on: () => openTab("edit") },
+    { icon: <Shapes />, label: "Elements", active: ["add", "shapes", "stickers", "icons", "frames", "grids", "decorations"].includes(tab), on: () => openTab("add") },
+    { icon: <Type />, label: "Text", active: ["textTools", "textPresets"].includes(tab) || (isTextSelected && tab === "props"), on: () => openTab(isTextSelected ? "textTools" : "textPresets") },
+    { icon: <ImagePlus />, label: "Uploads", active: false, on: () => { setPanelOpen(false); fileRef.current?.click(); } },
     { icon: <Paintbrush />, label: "Draw", active: tab === "draw", on: () => openTab("draw") },
-    { icon: <Scan />, label: "Arrange", active: ["position", "props"].includes(tab) && !isImageSelected, on: () => openTab("position") },
-    { icon: <Frame />, label: "Image", active: tab === "frames" || (isImageSelected && tab === "props"), on: () => openTab(isImageSelected ? "props" : "frames") },
+    { icon: <PaintBucket />, label: "Color", active: ["colors", "fill", "stroke"].includes(tab), on: () => openTab("colors") },
+    { icon: <Scan />, label: "Arrange", active: ["position", "props"].includes(tab) && !isTextSelected && !isImageSelected, on: () => openTab("position") },
     { icon: <Layers />, label: "Layers", active: tab === "layers", on: () => openTab("layers") },
     { icon: <SlidersHorizontal />, label: "Effects", active: ["effects", "edit"].includes(tab), on: () => openTab(o ? "effects" : "edit") },
+    { icon: <FolderOpen />, label: "Projects", active: false, on: () => setSaveHomeOpen(true) },
+    { icon: <WandSparkles />, label: "AI Tools", active: aiOpen, on: () => setAiOpen((value) => !value) },
     { icon: <Grid2X2 />, label: "Canvas", active: tab === "bg", on: () => openTab("bg") },
   ];
   const tools = mainTools;
@@ -865,8 +891,9 @@ export function Editor({ id }: { id: string }) {
           onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }}
         />
         <button title="Snap to guides" aria-label="Snap to guides" onClick={() => setSnapAlign((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${snapAlign ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Grid2X2 className="h-4 w-4" /> <span className="hidden sm:inline">Snap</span></button>
+        <button title="Canvas settings" aria-label="Canvas settings" onClick={() => openTab("bg")} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted"><Grid2X2 className="h-4 w-4" /><span className="hidden sm:inline">Canvas</span></button>
         <button title="AI design assistant" aria-label="AI design assistant" onClick={() => setAiOpen((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${aiOpen ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Sparkles className="h-4 w-4" /><span className="hidden sm:inline">Assistant</span></button>
-        <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
+        <span role="status" title={saved ? "All changes saved" : "Saving project changes"} className="hidden whitespace-nowrap text-xs text-muted-foreground sm:inline">{saved ? "Saved" : "Saving…"}</span>
         <div className="ml-auto flex items-center gap-1">
           <IconBtn label="Undo" disabled={h.i <= 0} onClick={undo}><Undo2 /></IconBtn>
           <IconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></IconBtn>
@@ -896,7 +923,7 @@ export function Editor({ id }: { id: string }) {
         {/* tool rail desktop */}
         <nav aria-label="Design tools" className="hidden w-20 shrink-0 flex-col gap-1 overflow-y-auto border-r border-border bg-card p-2 md:flex">
           {tools.map((t) => (
-            <Button variant="ghost" disabled={!ready} key={t.label} aria-pressed={t.active} onClick={t.on} className={`h-16 flex-col gap-1 px-0 text-[10px] [&_svg]:size-5 ${t.active ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+            <Button variant="ghost" disabled={!ready && !["Projects", "AI Tools"].includes(t.label)} key={t.label} title={t.label} aria-pressed={t.active} onClick={t.on} className={`min-h-14 shrink-0 flex-col gap-1 px-0 text-[10px] leading-tight [&_svg]:size-5 ${t.active ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
               {t.icon}{t.label}
             </Button>
           ))}
@@ -911,7 +938,15 @@ export function Editor({ id }: { id: string }) {
             onPointerMove={(e) => { const d = drag.current; if (d && wrapRef.current) { wrapRef.current.scrollLeft = d.sl - (e.clientX - d.x); wrapRef.current.scrollTop = d.st - (e.clientY - d.y); } }}
             onPointerUp={() => (drag.current = null)}
             onPointerLeave={() => (drag.current = null)}
-            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(44vh+6rem)] md:bottom-[30vh]" : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              const c = fc.current;
+              const target = c?.findTarget?.(event.nativeEvent);
+              if (target) c.setActiveObject(target);
+              if (target) { force(); setContextMenu({ x: Math.max(8, Math.min(event.clientX, window.innerWidth - 220)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - Math.min(500, window.innerHeight * 0.75))) }); }
+              else setContextMenu(null);
+            }}
+            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(46vh+9rem)] md:bottom-0 md:left-[320px]" : "bottom-36 md:bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
           >
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
               <div className={`checker relative shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
@@ -923,9 +958,22 @@ export function Editor({ id }: { id: string }) {
             </div>
           </div>
           {o && selectionInsideCanvas && (
-            <div className="pointer-events-auto absolute z-30 flex items-center gap-1 rounded-xl border border-border bg-card/95 p-1 shadow-xl backdrop-blur" style={{ left: toolbarLeft, top: toolbarTop }}>
-              <IconBtn label="Edit" onClick={() => openTab(["textbox", "i-text", "text"].includes(o.type) ? "textTools" : "props")}><Pencil /></IconBtn>
-              <IconBtn label="Copy" onClick={() => { void dup(); }}><Copy /></IconBtn>
+            <div className="pointer-events-auto absolute z-30 flex max-w-[calc(100%-1rem)] items-center gap-1 overflow-x-auto rounded-xl border border-border bg-card/95 p-1 shadow-xl backdrop-blur" style={{ left: toolbarLeft, top: toolbarTop }}>
+              <IconBtn label={isTextSelected ? "Edit text style" : isImageSelected ? "Crop and edit image" : "Edit object"} onClick={() => openTab(isTextSelected ? "textTools" : "props")}><Pencil /></IconBtn>
+              {isTextSelected && <>
+                <IconBtn label="Toggle bold" active={o.fontWeight === "bold"} onClick={() => { o.set("fontWeight", o.fontWeight === "bold" ? "normal" : "bold"); commit(); }}><Bold /></IconBtn>
+                <IconBtn label="Toggle italic" active={o.fontStyle === "italic"} onClick={() => { o.set("fontStyle", o.fontStyle === "italic" ? "normal" : "italic"); commit(); }}><Italic /></IconBtn>
+                <input type="color" aria-label="Text color" title="Text color" className="h-8 w-8 cursor-pointer rounded border border-border bg-transparent" value={toHex(o.fill, "#111111")} onChange={(event) => { o.set("fill", event.target.value); rememberPaletteColor(event.target.value); commit(); }} />
+              </>}
+              {isImageSelected && <>
+                <IconBtn label="Flip horizontal" onClick={() => { o.set("flipX", !o.flipX); commit(); }}><FlipHorizontal /></IconBtn>
+                <IconBtn label="Rotate left" onClick={() => { o.rotate((o.angle ?? 0) - 15); commit(); }}><RotateCcw /></IconBtn>
+              </>}
+              {isElementSelected && !isTextSelected && !isImageSelected && <input type="color" aria-label="Shape fill color" title="Shape fill color" className="h-8 w-8 cursor-pointer rounded border border-border bg-transparent" value={toHex(o.fill, "#c6f432")} onChange={(event) => { o.set("fill", event.target.value); rememberPaletteColor(event.target.value); commit(); }} />}
+              {o.type === "activeselection" && <IconBtn label="Group selected objects" onClick={groupSelection}><GroupIcon /></IconBtn>}
+              {o.type === "group" && <IconBtn label="Ungroup objects" onClick={ungroupSelection}><Ungroup /></IconBtn>}
+              <IconBtn label="Bring forward" onClick={() => order("up")}><ArrowUp /></IconBtn>
+              <IconBtn label="Duplicate" onClick={() => { void dup(); }}><Copy /></IconBtn>
               <IconBtn label="Delete" className="text-destructive" onClick={del}><Trash2 /></IconBtn>
             </div>
           )}
@@ -942,7 +990,7 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-24 z-40 h-[44vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:h-[30vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-36 z-40 h-[46vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:inset-x-auto md:bottom-0 md:left-20 md:top-14 md:h-auto md:w-[320px] md:rounded-none md:rounded-r-xl md:border-b-0 md:border-l md:border-t-0 md:shadow-xl`}>
           <div className="flex min-w-0 items-center gap-1 border-b border-border p-2">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
             {contextualTabs.map((t) => (
@@ -1026,16 +1074,34 @@ export function Editor({ id }: { id: string }) {
         </aside>
 
         {/* mobile category navigation */}
-        <div className="shrink-0 border-t border-border bg-card md:hidden">
-        <nav aria-label="Design categories" className="grid h-24 grid-cols-4 grid-rows-2 gap-1 p-1">
+      <div className="shrink-0 border-t border-border bg-card md:hidden">
+        <nav aria-label="Design categories" className="grid h-36 grid-cols-4 grid-rows-3 gap-1 p-1">
           {tools.map((t) => (
-            <Button variant="ghost" disabled={!ready} key={t.label} aria-pressed={t.active} onClick={t.on} className={`h-full min-w-0 w-full flex-col gap-0.5 px-1 text-[9px] leading-tight [&_svg]:size-5 ${t.active ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+            <Button variant="ghost" disabled={!ready && !["Projects", "AI Tools"].includes(t.label)} key={t.label} title={t.label} aria-pressed={t.active} onClick={t.on} className={`h-full min-h-10 min-w-0 w-full flex-col gap-0.5 px-1 text-[9px] leading-tight [&_svg]:size-5 ${t.active ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
               {t.icon}<span className="max-w-full text-center">{t.label}</span>
             </Button>
           ))}
         </nav>
         </div>
       </div>
+      {contextMenu && o && <>
+        <button type="button" aria-label="Close object menu" className="fixed inset-0 z-40 cursor-default" onClick={() => setContextMenu(null)} />
+        <div role="menu" aria-label="Object actions" className="fixed z-50 max-h-[min(70vh,28rem)] w-52 overflow-y-auto rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-2xl" style={{ left: contextMenu.x, top: contextMenu.y }} onContextMenu={(event) => event.preventDefault()}>
+          <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{o.name || o.type}</p>
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); void copyObject(); }}>Copy object</button>
+          {objectClipboard.current && <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); void pasteObject(); }}>Paste object</button>}
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); void dup(); }}>Duplicate</button>
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); void copyPng(true); }}>Copy as PNG</button>
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); order("top"); }}>Bring to front</button>
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); order("up"); }}>Bring forward</button>
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); order("down"); }}>Send backward</button>
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); order("bottom"); }}>Send to back</button>
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); toggleLock(o); }}>{o.lockedLayer ? "Unlock object" : "Lock object"}</button>
+          {o.type === "activeselection" && <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); groupSelection(); }}>Group objects</button>}
+          {o.type === "group" && <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs hover:bg-muted" onClick={() => { setContextMenu(null); ungroupSelection(); }}>Ungroup objects</button>}
+          <button role="menuitem" className="w-full rounded-md px-2 py-2 text-left text-xs text-destructive hover:bg-muted" onClick={() => { setContextMenu(null); del(); }}>Delete</button>
+        </div>
+      </>}
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
       <input ref={backgroundFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onBackgroundFile(e.target.files?.[0]); e.target.value = ""; }} />
       <AlertDialog open={!!pendingImage} onOpenChange={(open) => { if (!open && pendingImage) { URL.revokeObjectURL(pendingImage.url); setPendingImage(null); } }}>
