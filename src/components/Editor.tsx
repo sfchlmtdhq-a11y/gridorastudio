@@ -15,12 +15,18 @@ import { FontPicker } from "./FontPicker";
 import { DEFAULT_ADJUSTMENTS, installDesignAdjustments, type DesignAdjustments } from "@/lib/design-adjustments";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
 import { askGeminiDesignAssistant, type GeminiAction } from "@/lib/gemini";
+import { calculateSmartAlignment, measureNearestDistances, measureSelectionDistances, type Bounds, type DistanceMarker, type SmartGuide } from "@/lib/smart-guides";
 
 type Fab = typeof import("fabric");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Obj = any;
 const PROPS = ["name", "selectable", "evented", "lockedLayer", "text3dDepth", "textReflection", "textCurve"];
 const isTextObject = (o: Obj) => ["textbox", "i-text", "text"].includes(o?.type);
+const boundsOf = (object: Obj): Bounds | null => {
+  const bounds = object?.getBoundingRect?.();
+  if (!bounds || ![bounds.left, bounds.top, bounds.width, bounds.height].every(Number.isFinite)) return null;
+  return { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height };
+};
 const STICKERS = ["😀", "😍", "🔥", "✨", "🎉", "❤️", "👍", "💯", "⭐", "🌟", "🎁", "🎂", "🌈", "☀️", "🌙", "⚡", "🍕", "☕", "🎵", "📸", "🚀", "💎", "👑", "🏆", "🌸", "🍀", "🦋", "🐱", "🎈", "💥", "✅", "📍"];
 const ICONS: Record<string, string> = {
   Heart: "M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z",
@@ -72,9 +78,14 @@ export function Editor({ id }: { id: string }) {
   const [fitImportedImage, setFitImportedImage] = useState(true);
   const [useImageAsCanvas, setUseImageAsCanvas] = useState(false);
   const [cropRect, setCropRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
-  const [snapAlign, setSnapAlign] = useState(false);
-  const snapAlignRef = useRef(false);
+  const [snapAlign, setSnapAlign] = useState(true);
+  const snapAlignRef = useRef(true);
   const [showGrid, setShowGrid] = useState(false);
+  const showGridRef = useRef(false);
+  const [gridSpacing, setGridSpacing] = useState(20);
+  const gridSpacingRef = useRef(20);
+  const [snapToGrid, setSnapToGrid] = useState(false);
+  const snapToGridRef = useRef(false);
   const [showRulers, setShowRulers] = useState(false);
   const [guides, setGuides] = useState<Guide[]>([]);
   const guidesRef = useRef<Guide[]>([]);
@@ -83,7 +94,8 @@ export function Editor({ id }: { id: string }) {
   const [brushSize, setBrushSize] = useState(6);
   const [strokeStyle, setStrokeStyle] = useState<"solid" | "dashed" | "dotted">("solid");
   const [clearOpen, setClearOpen] = useState(false);
-  const [alignmentGuide, setAlignmentGuide] = useState<{ axis: "x" | "y"; value: number } | null>(null);
+  const [alignmentGuides, setAlignmentGuides] = useState<SmartGuide[]>([]);
+  const [distanceMarkers, setDistanceMarkers] = useState<DistanceMarker[]>([]);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
@@ -94,6 +106,9 @@ export function Editor({ id }: { id: string }) {
   const W = () => proj.current?.width ?? 1;
   const H = () => proj.current?.height ?? 1;
   snapAlignRef.current = snapAlign;
+  showGridRef.current = showGrid;
+  gridSpacingRef.current = gridSpacing;
+  snapToGridRef.current = snapToGrid;
   guidesRef.current = guides;
   useEffect(() => {
     const panel = panelContentRef.current;
@@ -235,36 +250,47 @@ export function Editor({ id }: { id: string }) {
       }
       c.requestRenderAll();
       const onChange = () => { if (!hist.current.lock) { snapshot(); scheduleSave(); } force(); };
-      c.on("object:modified", onChange);
+      c.on("object:modified", () => { setAlignmentGuides([]); setDistanceMarkers([]); onChange(); });
       c.on("object:added", onChange);
       c.on("object:removed", onChange);
       c.on("text:changed", onChange);
-      const onSel = () => { const selected = c.getActiveObject(); if (selected?.type === "image") setTab((current) => current === "fill" ? "position" : current); force(); };
+      const onSel = () => { const selected = c.getActiveObject(); if (selected?.type === "image") setTab((current) => current === "fill" ? "position" : current); setAlignmentGuides([]); setDistanceMarkers([]); force(); };
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
       c.on("selection:cleared", () => force());
       c.on("object:moving", ({ target }: { target?: Obj }) => {
-        if (!snapAlignRef.current || !target) return;
-        const tolerance = 14 / zoomRef.current, cx = W() / 2, cy = H() / 2;
-        const left = target.left ?? 0, top = target.top ?? 0, centerX = left + (target.getScaledWidth?.() ?? 0) / 2, centerY = top + (target.getScaledHeight?.() ?? 0) / 2;
-        let guide: { axis: "x" | "y"; value: number } | null = null;
-        if (Math.abs(centerX - cx) < tolerance) { target.left = cx - (target.getScaledWidth?.() ?? 0) / 2; guide = { axis: "x", value: cx }; }
-        else if (Math.abs(left - 0) < tolerance) { target.left = 0; guide = { axis: "x", value: 0 }; }
-        else if (Math.abs((left + (target.getScaledWidth?.() ?? 0)) - W()) < tolerance) { target.left = W() - (target.getScaledWidth?.() ?? 0); guide = { axis: "x", value: W() }; }
-        else if (Math.abs(centerY - cy) < tolerance) { target.top = cy - (target.getScaledHeight?.() ?? 0) / 2; guide = { axis: "y", value: cy }; }
-        else if (Math.abs(top - 0) < tolerance) { target.top = 0; guide = { axis: "y", value: 0 }; }
-        else if (Math.abs((top + (target.getScaledHeight?.() ?? 0)) - H()) < tolerance) { target.top = H() - (target.getScaledHeight?.() ?? 0); guide = { axis: "y", value: H() }; }
-        if (!guide) for (const manual of guidesRef.current) {
-          if (manual.axis === "x" && Math.abs(centerX - manual.value) < tolerance) { target.left = manual.value - (target.getScaledWidth?.() ?? 0) / 2; guide = manual; break; }
-          if (manual.axis === "y" && Math.abs(centerY - manual.value) < tolerance) { target.top = manual.value - (target.getScaledHeight?.() ?? 0) / 2; guide = manual; break; }
-        }
-        const textObjects = c.getObjects().filter((x: Obj) => x !== target && ["textbox", "i-text", "text"].includes(x.type));
-        for (const other of textObjects) {
-          if (Math.abs((target.top ?? 0) - (other.top ?? 0)) < tolerance) { target.top = other.top; guide = { axis: "y", value: other.top ?? 0 }; break; }
-          if (Math.abs((target.left ?? 0) - (other.left ?? 0)) < tolerance) { target.left = other.left; guide = { axis: "x", value: other.left ?? 0 }; break; }
-          if (Math.abs(centerX - ((other.left ?? 0) + (other.getScaledWidth?.() ?? 0) / 2)) < tolerance) { target.left = (other.left ?? 0) + (other.getScaledWidth?.() ?? 0) / 2 - (target.getScaledWidth?.() ?? 0) / 2; guide = { axis: "x", value: (other.left ?? 0) + (other.getScaledWidth?.() ?? 0) / 2 }; break; }
-        }
-        target.setCoords(); setAlignmentGuide(guide); if (guide) window.setTimeout(() => setAlignmentGuide(null), 200);
+        if (!target) return;
+        target.setCoords();
+        const movingBounds = boundsOf(target);
+        if (!movingBounds) return;
+        const isMultiObject = target.type === "activeselection" || target.type === "group";
+        const members: Obj[] = isMultiObject ? target.getObjects?.() ?? [] : [target];
+        const memberSet = new Set([target, ...members]);
+        const peerObjects = c.getObjects().filter((object: Obj) => !memberSet.has(object) && object.visible !== false);
+        const peerBounds = peerObjects.map(boundsOf).filter((bounds): bounds is Bounds => bounds !== null);
+        const alignment = calculateSmartAlignment(movingBounds, {
+          canvasWidth: W(),
+          canvasHeight: H(),
+          objects: peerBounds,
+          manualGuides: guidesRef.current,
+          tolerance: 10 / zoomRef.current,
+          snapEnabled: snapAlignRef.current,
+          gridSpacing: gridSpacingRef.current,
+          snapToGrid: snapToGridRef.current,
+        });
+        if (alignment.dx || alignment.dy) target.set({ left: (target.left ?? 0) + alignment.dx, top: (target.top ?? 0) + alignment.dy });
+        target.setCoords();
+        if (isMultiObject) for (const member of members) member.setCoords?.();
+        setAlignmentGuides(alignment.guides);
+
+        const movedBounds = boundsOf(target) ?? { ...movingBounds, left: movingBounds.left + alignment.dx, top: movingBounds.top + alignment.dy };
+        const memberBounds = members.map(boundsOf).filter((bounds): bounds is Bounds => bounds !== null);
+        const markers = [
+          ...measureNearestDistances(movedBounds, peerBounds),
+          ...(isMultiObject ? measureSelectionDistances(memberBounds) : []),
+        ];
+        const nearest = (orientation: DistanceMarker["orientation"]) => markers.filter((marker) => marker.orientation === orientation).sort((a, b) => a.distance - b.distance)[0];
+        setDistanceMarkers([nearest("horizontal"), nearest("vertical")].filter((marker): marker is DistanceMarker => marker !== undefined));
       });
       c.on("mouse:down", ({ target }: { target?: Obj }) => {
         if (!target) { tapRef.current = { target: null, count: 0 }; setTab("bg"); setPanelOpen(true); return; }
@@ -280,6 +306,8 @@ export function Editor({ id }: { id: string }) {
         if (target && ["textbox", "i-text", "text"].includes(target.type)) { tapRef.current = { target, count: 2 }; setPanelOpen(true); setTab("props"); target.exitEditing?.(); force(); }
       });
       c.on("mouse:up", ({ target }: { target?: Obj }) => {
+        setAlignmentGuides([]);
+        setDistanceMarkers([]);
         if (target && ["textbox", "i-text", "text"].includes(target.type) && tapRef.current.target === target && tapRef.current.count >= 3) { target.enterEditing?.(); target.selectAll?.(); c.requestRenderAll(); }
       });
       setReady(true);
@@ -925,7 +953,7 @@ export function Editor({ id }: { id: string }) {
           key={ready ? "r" : "n"}
           onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }}
         />
-        <button title="Snap to guides" aria-label="Snap to guides" onClick={() => setSnapAlign((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${snapAlign ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Grid2X2 className="h-4 w-4" /> <span className="hidden sm:inline">Snap</span></button>
+        <button title="Smart snapping" aria-label="Smart snapping" aria-pressed={snapAlign} onClick={() => setSnapAlign((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${snapAlign ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Grid2X2 className="h-4 w-4" /> <span className="hidden sm:inline">Snap</span></button>
         <button title="Canvas settings" aria-label="Canvas settings" onClick={() => openTab("bg")} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted"><Grid2X2 className="h-4 w-4" /><span className="hidden sm:inline">Canvas</span></button>
         <button title="AI design assistant" aria-label="AI design assistant" onClick={() => setAiOpen((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${aiOpen ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Sparkles className="h-4 w-4" /><span className="hidden sm:inline">Assistant</span></button>
         <span role="status" title={saved ? "All changes saved" : "Saving project changes"} className="hidden whitespace-nowrap text-xs text-muted-foreground sm:inline">{saved ? "Saved" : "Saving…"}</span>
@@ -986,8 +1014,22 @@ export function Editor({ id }: { id: string }) {
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
               <div className={`checker relative shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
                 <canvas ref={canvasEl} />
-                {showGrid && <div className="pointer-events-none absolute inset-0 z-10" aria-hidden="true" style={{ backgroundImage: "linear-gradient(to right, rgba(100,116,139,.23) 1px, transparent 1px), linear-gradient(to bottom, rgba(100,116,139,.23) 1px, transparent 1px)", backgroundSize: `${Math.max(8, 20 * zoom)}px ${Math.max(8, 20 * zoom)}px` }} />}
+                {showGrid && <div className="pointer-events-none absolute inset-0 z-10" aria-hidden="true" style={{ backgroundImage: "linear-gradient(to right, rgba(100,116,139,.23) 1px, transparent 1px), linear-gradient(to bottom, rgba(100,116,139,.23) 1px, transparent 1px)", backgroundSize: `${Math.max(1, gridSpacing * zoom)}px ${Math.max(1, gridSpacing * zoom)}px` }} />}
                 {guides.map((guide, index) => <div key={`${guide.axis}-${index}`} className="pointer-events-none absolute z-20 bg-fuchsia-500/80" aria-hidden="true" style={guide.axis === "x" ? { left: guide.value * zoom - 1, top: 0, bottom: 0, width: 2 } : { top: guide.value * zoom - 1, left: 0, right: 0, height: 2 }} />)}
+                {alignmentGuides.map((guide, index) => {
+                  const color = guide.source === "canvas-center" ? "#ef4444" : guide.source === "manual" ? "#d946ef" : "#3b82f6";
+                  return <div key={`${guide.axis}-${guide.value}-${guide.source}-${index}`} className="pointer-events-none absolute z-20" aria-hidden="true" style={{ backgroundColor: color, boxShadow: `0 0 2px ${color}`, ...(guide.axis === "x" ? { left: guide.value * zoom - 1, top: 0, bottom: 0, width: 2 } : { top: guide.value * zoom - 1, left: 0, right: 0, height: 2 }) }} />;
+                })}
+                {distanceMarkers.map((marker, index) => {
+                  const horizontal = marker.orientation === "horizontal";
+                  const lineLength = marker.distance * zoom;
+                  return <div key={`${marker.orientation}-${marker.start}-${marker.position}-${index}`} className="pointer-events-none absolute z-30" aria-hidden="true" style={horizontal ? { left: marker.start * zoom, top: marker.position * zoom, width: lineLength, height: 1 } : { left: marker.position * zoom, top: marker.start * zoom, width: 1, height: lineLength }}>
+                    <div className="absolute inset-0 bg-slate-800 dark:bg-slate-100" />
+                    <span className={`absolute whitespace-nowrap rounded bg-slate-900 px-1 py-0.5 text-[9px] font-semibold text-white shadow ${horizontal ? "bottom-1 left-1/2 -translate-x-1/2" : "left-1 top-1/2 -translate-y-1/2"}`}>{Math.round(marker.distance)} px</span>
+                    <span className={horizontal ? "absolute -left-px -top-1 h-2 w-px bg-slate-800 dark:bg-slate-100" : "absolute -left-1 -top-px h-px w-2 bg-slate-800 dark:bg-slate-100"} />
+                    <span className={horizontal ? "absolute -right-px -top-1 h-2 w-px bg-slate-800 dark:bg-slate-100" : "absolute -left-1 -bottom-px h-px w-2 bg-slate-800 dark:bg-slate-100"} />
+                  </div>;
+                })}
                 {showRulers && <div className="pointer-events-none absolute inset-0 z-30" aria-hidden="true"><div className="absolute left-0 right-0 top-0 flex h-4 overflow-hidden border-b border-slate-500/40 bg-slate-100/85 text-[8px] text-slate-700">{Array.from({ length: Math.ceil(W() / 50) }, (_, i) => <span key={i} className="relative h-full shrink-0 border-l border-slate-500/50 pl-0.5" style={{ width: 50 * zoom }}>{i * 50}</span>)}</div><div className="absolute bottom-0 left-0 top-0 flex w-4 flex-col overflow-hidden border-r border-slate-500/40 bg-slate-100/85 text-[8px] text-slate-700">{Array.from({ length: Math.ceil(H() / 50) }, (_, i) => <span key={i} className="relative w-full shrink-0 border-t border-slate-500/50" style={{ height: 50 * zoom }}><span className="absolute left-0 top-0">{i * 50}</span></span>)}</div></div>}
               </div>
             </div>
@@ -1012,7 +1054,6 @@ export function Editor({ id }: { id: string }) {
               <IconBtn label="Delete" className="text-destructive" onClick={del}><Trash2 /></IconBtn>
             </div>
           )}
-          {alignmentGuide && canvasBounds && wrapBounds && <div className="pointer-events-none absolute z-20 bg-primary/70" style={alignmentGuide.axis === "x" ? { left: canvasBounds.left - wrapBounds.left + alignmentGuide.value * zoom - 1, top: canvasBounds.top - wrapBounds.top, height: canvasBounds.height, width: 2 } : { left: canvasBounds.left - wrapBounds.left, top: canvasBounds.top - wrapBounds.top + alignmentGuide.value * zoom - 1, width: canvasBounds.width, height: 2 }} />}
           {/* zoom controls */}
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card/95 px-2 py-1 shadow-lg backdrop-blur">
             <IconBtn label="Zoom out" onClick={() => applyZoom(zoom / 1.2)}><ZoomOut /></IconBtn>
@@ -1089,7 +1130,7 @@ export function Editor({ id }: { id: string }) {
                 {o?.type === "activeselection" && (fc.current?.getActiveObjects?.().length ?? 0) >= 3 && <div className="grid grid-cols-2 gap-1 pt-2"><button className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => spaceEvenly("x")}>Space evenly horizontally</button><button className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => spaceEvenly("y")}>Space evenly vertically</button></div>}
               </div>
             )}
-            {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} showGrid={showGrid} setShowGrid={setShowGrid} showRulers={showRulers} setShowRulers={setShowRulers} guides={guides} setGuides={setGuides} snapAlign={snapAlign} setSnapAlign={setSnapAlign} onClear={() => setClearOpen(true)} />}
+            {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} showGrid={showGrid} setShowGrid={setShowGrid} gridSpacing={gridSpacing} setGridSpacing={setGridSpacing} showRulers={showRulers} setShowRulers={setShowRulers} guides={guides} setGuides={setGuides} snapAlign={snapAlign} setSnapAlign={setSnapAlign} snapToGrid={snapToGrid} setSnapToGrid={setSnapToGrid} onClear={() => setClearOpen(true)} />}
             {ready && tab === "shapes" && (
               <Grid>
                 {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow"].map((k) => (
@@ -1673,7 +1714,7 @@ function ImageCrop({ o, set }: { o: Obj; set: (p: Record<string, unknown>) => vo
 }
 
 /* ---------- Canvas panel ---------- */
-function CanvasPanel({ c, f, proj, commit, addImage, resize, showGrid, setShowGrid, showRulers, setShowRulers, guides, setGuides, snapAlign, setSnapAlign, onClear }: { c: Obj; f: Fab; proj: Project; commit: () => void; addImage: () => void; resize: (w: number, h: number) => void; showGrid: boolean; setShowGrid: (value: boolean) => void; showRulers: boolean; setShowRulers: (value: boolean) => void; guides: Guide[]; setGuides: (value: Guide[]) => void; snapAlign: boolean; setSnapAlign: (value: boolean) => void; onClear: () => void }) {
+function CanvasPanel({ c, f, proj, commit, addImage, resize, showGrid, setShowGrid, gridSpacing, setGridSpacing, showRulers, setShowRulers, guides, setGuides, snapAlign, setSnapAlign, snapToGrid, setSnapToGrid, onClear }: { c: Obj; f: Fab; proj: Project; commit: () => void; addImage: () => void; resize: (w: number, h: number) => void; showGrid: boolean; setShowGrid: (value: boolean) => void; gridSpacing: number; setGridSpacing: (value: number) => void; showRulers: boolean; setShowRulers: (value: boolean) => void; guides: Guide[]; setGuides: (value: Guide[]) => void; snapAlign: boolean; setSnapAlign: (value: boolean) => void; snapToGrid: boolean; setSnapToGrid: (value: boolean) => void; onClear: () => void }) {
   const bg = c.backgroundColor;
   const bgImage = c.backgroundImage;
   const mode = !bg ? "none" : typeof bg === "string" ? "solid" : "gradient";
@@ -1715,9 +1756,13 @@ function CanvasPanel({ c, f, proj, commit, addImage, resize, showGrid, setShowGr
         <button className="w-full rounded-md bg-secondary py-2 text-xs font-medium hover:opacity-90" onClick={() => resize(Math.min(5000, Math.max(50, w)), Math.min(5000, Math.max(50, h)))}>Apply size</button>
       </Section>
       <Section title="Canvas tools">
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={snapAlign} onChange={(e) => setSnapAlign(e.target.checked)} /> Smart snapping</label>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">Aligns to the canvas center and edges, other object edges and centers, and your guides. Center lines are red; object and edge matches are blue. Distances appear while you drag. Grid snapping is separate.</p>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> Show grid</label>
+        <Slider label={`Grid spacing (${gridSpacing} px)`} value={gridSpacing} min={5} max={100} step={5} onChange={setGridSpacing} />
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={snapToGrid} onChange={(e) => setSnapToGrid(e.target.checked)} /> Snap to grid</label>
+        <p className="text-[11px] text-muted-foreground">Grid snapping follows the spacing above, even if Smart snapping is off.</p>
         <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={showRulers} onChange={(e) => setShowRulers(e.target.checked)} /> Show rulers</label>
-        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={snapAlign} onChange={(e) => setSnapAlign(e.target.checked)} /> Snap to guides</label>
         <div className="grid grid-cols-2 gap-1"><button className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={() => setGuides([...guides, { axis: "x", value: proj.width / 2 }])}>Add vertical guide</button><button className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={() => setGuides([...guides, { axis: "y", value: proj.height / 2 }])}>Add horizontal guide</button></div>
         {guides.map((guide, index) => <div key={`${guide.axis}-${index}`} className="flex items-end gap-2"><div className="flex-1"><NumberField label={`${guide.axis === "x" ? "Vertical" : "Horizontal"} guide position`} value={guide.value} onChange={(value) => setGuides(guides.map((item, i) => i === index ? { ...item, value: Math.max(0, Math.min(guide.axis === "x" ? proj.width : proj.height, value)) } : item))} /></div><button className="mb-1 rounded border border-border px-2 py-1 text-xs text-destructive" aria-label="Remove guide" onClick={() => setGuides(guides.filter((_, i) => i !== index))}>Remove</button></div>)}
         <Button variant="outline" className="w-full text-destructive" onClick={onClear}><Trash2 /> Clear canvas</Button>
