@@ -36,7 +36,7 @@ const ICONS: Record<string, string> = {
   Home: "M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z",
   Crown: "M2 7l5 4 5-7 5 7 5-4-2 12H4z",
 };
-type Tab = "props" | "textTools" | "textPresets" | "position" | "fill" | "stroke" | "effects" | "layers" | "shapes" | "stickers" | "icons" | "frames" | "grids" | "decorations" | "bg" | "edit" | "colors" | "draw";
+type Tab = "add" | "props" | "textTools" | "textPresets" | "position" | "fill" | "stroke" | "effects" | "layers" | "shapes" | "stickers" | "icons" | "frames" | "grids" | "decorations" | "bg" | "edit" | "colors" | "draw";
 type DrawingTool = "pen" | "freehand" | "brush" | "eraser" | "line" | "highlighter" | null;
 type Guide = { axis: "x" | "y"; value: number };
 
@@ -63,8 +63,6 @@ export function Editor({ id }: { id: string }) {
   const [hand, setHand] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [saved, setSaved] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [transparentOpen, setTransparentOpen] = useState(false);
   const [eraseBusy, setEraseBusy] = useState<string | null>(null);
   const [saveHomeOpen, setSaveHomeOpen] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ file: File; url: string; target: "element" | "background"; width: number; height: number } | null>(null);
@@ -806,10 +804,10 @@ export function Editor({ id }: { id: string }) {
   const isTextSelected = !!o && ["textbox", "i-text", "text"].includes(o.type);
   const isImageSelected = !!o && o.type === "image";
   const isElementSelected = !!o;
-  const standaloneTabs: Tab[] = ["layers", "edit", "position", "shapes", "stickers", "icons", "textPresets", "frames", "grids", "decorations", "colors", "draw"];
+  const standaloneTabs: Tab[] = ["add", "layers", "edit", "position", "shapes", "stickers", "icons", "textPresets", "frames", "grids", "decorations", "colors", "draw"];
   const contextualTabs: Tab[] = standaloneTabs.includes(tab) ? [tab] : isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isImageSelected ? ["props", "position", "stroke", "effects", "frames"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : ["bg", "layers", "edit"];
-  const tabLabel: Record<Tab, string> = { props: "Properties", textTools: "Text tools", textPresets: "Text presets", position: "Position & align", fill: "Fill", stroke: "Stroke", effects: "Effects & filters", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons & illustrations", frames: "Frames", grids: "Grids", decorations: "Decorations", bg: "Canvas", edit: "Adjustments", colors: "Color tools", draw: "Drawing tools" };
-  const tabIcon: Record<Tab, ReactNode> = { props: <SlidersHorizontal />, textTools: <Type />, textPresets: <Heading />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, frames: <Frame />, grids: <Grid3X3 />, decorations: <Sparkles />, bg: <PaintBucket />, edit: <Paintbrush />, colors: <PaintBucket />, draw: <Paintbrush /> };
+  const tabLabel: Record<Tab, string> = { add: "Add tools", props: "Properties", textTools: "Text tools", textPresets: "Text presets", position: "Position & align", fill: "Fill", stroke: "Outline", effects: "Effects", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons & illustrations", frames: "Frames", grids: "Grids", decorations: "Decorations", bg: "Canvas", edit: "Adjustments", colors: "Color", draw: "Draw" };
+  const tabIcon: Record<Tab, ReactNode> = { add: <Plus />, props: <SlidersHorizontal />, textTools: <Type />, textPresets: <Heading />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, frames: <Frame />, grids: <Grid3X3 />, decorations: <Sparkles />, bg: <Grid2X2 />, edit: <Paintbrush />, colors: <PaintBucket />, draw: <Paintbrush /> };
   const chooseDrawingTool = (tool: DrawingTool) => { setHand(false); setDrawingTool(tool); };
   const selectionBounds = o?.getBoundingRect?.();
   const canvasBounds = canvasEl.current?.getBoundingClientRect();
@@ -824,33 +822,33 @@ export function Editor({ id }: { id: string }) {
     add(new f.Textbox(new Date().toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }), { width: W() * 0.6, fontSize: Math.round(Math.min(W(), H()) / 18), fontFamily: "Manrope", fill: "#111111", textAlign: "center", name: "Date" }));
     setPanelOpen(true);
   };
-  const addTools: { icon: ReactNode; label: string; on: () => void }[] = [
-    { icon: <ImagePlus />, label: "Upload image", on: () => fileRef.current?.click() },
-    { icon: <Type />, label: "Add text", on: addText },
-    { icon: <Heading />, label: "Heading", on: () => addTextPreset("heading") },
-    { icon: <Type />, label: "Subheading", on: () => addTextPreset("subheading") },
-    { icon: <AlignLeft />, label: "Body text", on: () => addTextPreset("body") },
-    { icon: <Type />, label: "Text styles", on: () => openTab("textPresets") },
-    { icon: <Shapes />, label: "Shapes", on: () => openTab("shapes") },
-    { icon: <Smile />, label: "Stickers", on: () => openTab("stickers") },
-    { icon: <Star />, label: "Icons & illustrations", on: () => openTab("icons") },
-    { icon: <Frame />, label: "Frames", on: () => openTab("frames") },
-    { icon: <Grid3X3 />, label: "Grids", on: () => openTab("grids") },
-    { icon: <Sparkles />, label: "Decorations", on: () => openTab("decorations") },
-    { icon: <CalendarDays />, label: "Date", on: addDate },
+  const addTools: { icon: ReactNode; label: string; category: "Media" | "Text" | "Elements"; on: () => void }[] = [
+    { icon: <ImagePlus />, label: "Upload image", category: "Media", on: () => fileRef.current?.click() },
+    { icon: <Type />, label: "Add text", category: "Text", on: addText },
+    { icon: <Heading />, label: "Heading", category: "Text", on: () => addTextPreset("heading") },
+    { icon: <Type />, label: "Subheading", category: "Text", on: () => addTextPreset("subheading") },
+    { icon: <AlignLeft />, label: "Body text", category: "Text", on: () => addTextPreset("body") },
+    { icon: <Type />, label: "Text styles", category: "Text", on: () => openTab("textPresets") },
+    { icon: <CalendarDays />, label: "Date", category: "Text", on: addDate },
+    { icon: <Shapes />, label: "Shapes", category: "Elements", on: () => openTab("shapes") },
+    { icon: <Smile />, label: "Stickers", category: "Elements", on: () => openTab("stickers") },
+    { icon: <Star />, label: "Icons & illustrations", category: "Elements", on: () => openTab("icons") },
+    { icon: <Frame />, label: "Frames", category: "Elements", on: () => openTab("frames") },
+    { icon: <Grid3X3 />, label: "Grids", category: "Elements", on: () => openTab("grids") },
+    { icon: <Sparkles />, label: "Decorations", category: "Elements", on: () => openTab("decorations") },
   ];
-  const mainTools: { icon: ReactNode; label: string; on: () => void }[] = [
-    { icon: <Plus />, label: "Add", on: () => { setAdding(true); setPanelOpen(false); } },
-    { icon: <PaintBucket />, label: "Colors", on: () => openTab("colors") },
-    { icon: <Paintbrush />, label: "Draw", on: () => openTab("draw") },
-    { icon: <Scan />, label: "Position", on: () => openTab("position") },
-    { icon: <Frame />, label: "Crop / frame", on: () => openTab(isImageSelected ? "props" : "frames") },
-    { icon: <Layers />, label: "Layers", on: () => openTab("layers") },
-    { icon: <SlidersHorizontal />, label: "Edit", on: () => openTab("edit") },
-    { icon: <Scan />, label: "Transparent", on: () => setTransparentOpen(true) },
+  const addTabs: Tab[] = ["add", "textTools", "textPresets", "shapes", "stickers", "icons", "frames", "grids", "decorations"];
+  const mainTools: { icon: ReactNode; label: string; active: boolean; on: () => void }[] = [
+    { icon: <Plus />, label: "Add", active: addTabs.includes(tab), on: () => openTab("add") },
+    { icon: <PaintBucket />, label: "Color", active: ["colors", "fill", "stroke"].includes(tab), on: () => openTab("colors") },
+    { icon: <Paintbrush />, label: "Draw", active: tab === "draw", on: () => openTab("draw") },
+    { icon: <Scan />, label: "Arrange", active: ["position", "props"].includes(tab) && !isImageSelected, on: () => openTab("position") },
+    { icon: <Frame />, label: "Image", active: tab === "frames" || (isImageSelected && tab === "props"), on: () => openTab(isImageSelected ? "props" : "frames") },
+    { icon: <Layers />, label: "Layers", active: tab === "layers", on: () => openTab("layers") },
+    { icon: <SlidersHorizontal />, label: "Effects", active: ["effects", "edit"].includes(tab), on: () => openTab(o ? "effects" : "edit") },
+    { icon: <Grid2X2 />, label: "Canvas", active: tab === "bg", on: () => openTab("bg") },
   ];
-  const tools = adding ? addTools : mainTools;
-  const backTools = () => { setAdding(false); setPanelOpen(false); };
+  const tools = mainTools;
   const requestHome = (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setSaveHomeOpen(true); };
   const saveProjectAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
   const exportAndHome = async (kind: "png" | "jpg" | "pdf") => { await exportAs(kind); setSaveHomeOpen(false); nav({ to: "/" }); };
@@ -897,9 +895,8 @@ export function Editor({ id }: { id: string }) {
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* tool rail desktop */}
         <nav aria-label="Design tools" className="hidden w-20 shrink-0 flex-col gap-1 overflow-y-auto border-r border-border bg-card p-2 md:flex">
-          {adding && <Button variant="outline" size="icon" className="mx-auto mb-2 rounded-full" title="Back to tools" aria-label="Back to tools" onClick={backTools}><ArrowLeft /></Button>}
           {tools.map((t) => (
-            <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-16 flex-col gap-1 px-0 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
+            <Button variant="ghost" disabled={!ready} key={t.label} aria-pressed={t.active} onClick={t.on} className={`h-16 flex-col gap-1 px-0 text-[10px] [&_svg]:size-5 ${t.active ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
               {t.icon}{t.label}
             </Button>
           ))}
@@ -914,7 +911,7 @@ export function Editor({ id }: { id: string }) {
             onPointerMove={(e) => { const d = drag.current; if (d && wrapRef.current) { wrapRef.current.scrollLeft = d.sl - (e.clientX - d.x); wrapRef.current.scrollTop = d.st - (e.clientY - d.y); } }}
             onPointerUp={() => (drag.current = null)}
             onPointerLeave={() => (drag.current = null)}
-            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(24vh+4rem)] md:bottom-[22vh]" : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(44vh+6rem)] md:bottom-[30vh]" : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
           >
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
               <div className={`checker relative shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
@@ -945,18 +942,34 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 h-[24vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:h-[22vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-24 z-40 h-[44vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:h-[30vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
           <div className="flex min-w-0 items-center gap-1 border-b border-border p-2">
-            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overscroll-contain whitespace-nowrap">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
             {contextualTabs.map((t) => (
-              <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`shrink-0 px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
-                <span className="inline-flex items-center gap-1 [&_svg]:h-4 [&_svg]:w-4">{tabIcon[t]}{tabLabel[t]}</span>
+              <Button variant="ghost" size="sm" key={t} title={tabLabel[t]} aria-label={tabLabel[t]} onClick={() => setTab(t)} className={`min-w-0 basis-[calc(33.333%-0.25rem)] justify-center px-1 text-[10px] leading-tight md:basis-auto md:px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
+                <span className="inline-flex min-w-0 items-center gap-1 [&_svg]:h-4 [&_svg]:w-4"><span className="shrink-0">{tabIcon[t]}</span><span className="truncate">{tabLabel[t]}</span></span>
               </Button>
             ))}
             </div>
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
-          <div ref={panelContentRef} className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto overscroll-contain scroll-smooth p-4">
+          <div ref={panelContentRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-3 sm:p-4">
+            {ready && tab === "add" && (
+              <div className="grid w-full max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {(["Media", "Text", "Elements"] as const).map((category) => (
+                  <section key={category} className="min-w-0 rounded-lg border border-border p-3">
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{category}</h3>
+                    <div className="grid grid-cols-2 gap-2">
+                      {addTools.filter((item) => item.category === category).map((item) => (
+                        <button key={item.label} type="button" onClick={item.on} className="flex min-h-12 min-w-0 items-center gap-2 rounded-md border border-border px-2 py-2 text-left text-xs hover:bg-muted">
+                          <span className="shrink-0 text-primary [&_svg]:h-4 [&_svg]:w-4">{item.icon}</span><span className="min-w-0 break-words">{item.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
             {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} onPickColor={pickColorFromCanvas} mode="legacy" actions={{ dup, del, order, toggleLock, group: groupSelection, ungroup: ungroupSelection, align: alignToCanvas }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
             {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(mode, color, tol) => { void eraseImageBackground(mode, color, tol); }} eraseBusy={eraseBusy} onPickColor={pickColorFromCanvas} onMaskImage={maskImage} onAlign={alignToCanvas} />}
             {ready && tab === "position" && !o && <p className="text-sm text-muted-foreground">Select an object to position, resize, rotate, flip, or align it to the canvas.</p>}
@@ -1012,13 +1025,12 @@ export function Editor({ id }: { id: string }) {
           </div>
         </aside>
 
-        {/* tool rail mobile */}
+        {/* mobile category navigation */}
         <div className="shrink-0 border-t border-border bg-card md:hidden">
-          {adding && <div className="flex h-12 items-center gap-3 px-4"><Button variant="outline" size="icon" className="h-8 w-8 rounded-full" aria-label="Back to tools" title="Back to tools" onClick={backTools}><ArrowLeft /></Button><span className="text-xs font-semibold text-primary">Add</span></div>}
-        <nav aria-label="Design tools" className="flex h-16 items-center justify-start gap-1 overflow-x-auto px-2">
+        <nav aria-label="Design categories" className="grid h-24 grid-cols-4 grid-rows-2 gap-1 p-1">
           {tools.map((t) => (
-            <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-14 min-w-[4.5rem] flex-col gap-1 px-1 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
-              {t.icon}{t.label}
+            <Button variant="ghost" disabled={!ready} key={t.label} aria-pressed={t.active} onClick={t.on} className={`h-full min-w-0 w-full flex-col gap-0.5 px-1 text-[9px] leading-tight [&_svg]:size-5 ${t.active ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+              {t.icon}<span className="max-w-full text-center">{t.label}</span>
             </Button>
           ))}
         </nav>
@@ -1040,12 +1052,6 @@ export function Editor({ id }: { id: string }) {
           <AlertDialogHeader><AlertDialogTitle>Save this project before leaving?</AlertDialogTitle><AlertDialogDescription>Save it to your Gridora library to keep editing it later, or export a copy to your device. Leaving without saving may lose your latest changes.</AlertDialogDescription></AlertDialogHeader>
           <div className="grid gap-2 sm:grid-cols-2"><Button onClick={() => { void saveProjectAndHome(); }}>Save project</Button><Button variant="outline" onClick={() => { void exportAndHome("png"); }}>Export PNG</Button><Button variant="outline" onClick={() => { void exportAndHome("jpg"); }}>Export JPG</Button><Button variant="outline" onClick={() => { void exportAndHome("pdf"); }}>Export PDF</Button></div>
           <button className="text-center text-xs text-destructive underline" onClick={() => { void deleteProject(id).finally(() => { setSaveHomeOpen(false); nav({ to: "/" }); }); }}>Discard project without saving</button>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={transparentOpen} onOpenChange={setTransparentOpen}>
-        <AlertDialogContent className="w-[calc(100%-2rem)] rounded-lg">
-          <AlertDialogHeader><AlertDialogTitle>Make the background transparent?</AlertDialogTitle><AlertDialogDescription>This removes the canvas background color or gradient. Your images, text and other layers stay unchanged.</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { if (!fc.current) return; snapshot(); fc.current.backgroundColor = ""; commit(); }}>Make transparent</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
       <AlertDialog open={clearOpen} onOpenChange={setClearOpen}>
@@ -1086,10 +1092,10 @@ function ShapeIcon({ k }: { k: string }) {
 }
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="mb-0 min-w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] shrink-0 snap-start md:min-w-[240px] md:max-w-[280px]">
+    <section className="w-full min-w-0 max-w-[720px] rounded-lg border border-border bg-card/40 p-3">
       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
       <div className="space-y-2">{children}</div>
-    </div>
+    </section>
   );
 }
 function Slider({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void }) {
@@ -1196,7 +1202,7 @@ function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { 
     set({ shadow: new f.Shadow({ ...cur, ...p }) });
   };
   if (mode === "general") return (
-    <div className="flex min-w-[calc(100vw-2rem)] items-start gap-2 md:min-w-[240px]">
+    <div className="grid w-full max-w-[720px] grid-cols-3 gap-2 sm:grid-cols-5">
       <IconBtn label="Copy" onClick={actions.dup}><Copy /></IconBtn>
       <IconBtn label="Bring forward" onClick={() => actions.order("up")}><ArrowUp /></IconBtn>
       <IconBtn label="Send backward" onClick={() => actions.order("down")}><ArrowDown /></IconBtn>
@@ -1206,8 +1212,8 @@ function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { 
   );
 
   return (
-    <div className="flex min-w-max items-start gap-4 pb-2">
-      <div className="grid min-w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] shrink-0 snap-start grid-cols-6 gap-1 md:min-w-[240px] md:max-w-[280px]">
+    <div className="grid w-full max-w-6xl grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-3 gap-1 rounded-lg border border-border p-3 sm:col-span-2 xl:col-span-3">
         <IconBtn label="Duplicate" onClick={actions.dup}><Copy /></IconBtn>
         <IconBtn label="Bring forward" onClick={() => actions.order("up")}><ArrowUp /></IconBtn>
         <IconBtn label="Send backward" onClick={() => actions.order("down")}><ArrowDown /></IconBtn>
@@ -1500,7 +1506,7 @@ function ColorTools({ c, f, selected, commit, onPickColor }: { c: Obj; f: Fab; s
     c.requestRenderAll(); commit();
   };
   const applyGradient = () => { c.backgroundImage = undefined; c.backgroundColor = makeGradient(f, gradient.a, gradient.b, gradient.angle, c.getWidth(), c.getHeight(), "pixels"); c.requestRenderAll(); commit(); };
-  return <div className="flex min-w-max items-start gap-4 pb-2">
+  return <div className="grid w-full max-w-5xl grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
     <Section title="Color picker"><div className="flex gap-1">{(["fill", "stroke", "background"] as const).map((kind) => <button key={kind} aria-pressed={target === kind} className={`flex-1 rounded-md border border-border px-2 py-1.5 text-xs capitalize ${target === kind ? "bg-muted text-foreground" : "text-muted-foreground"}`} onClick={() => setTarget(kind)}>{kind}</button>)}</div><Color label={target === "background" || !selected ? "Solid background color" : `${target} color`} value={base} onChange={apply} onPick={onPickColor} />{selected && <Slider label="Layer transparency (%)" value={(selected.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => { selected.set({ opacity: v / 100 }); selected.canvas?.requestRenderAll(); commit(); }} />}</Section>
     <Section title="Document colors">{colors.length === 0 ? <p className="text-xs text-muted-foreground">Add colors to the canvas to build this palette.</p> : <div className="flex flex-wrap gap-2">{colors.map((color) => <button key={color} type="button" title={color} aria-label={`Apply document color ${color}`} className="h-7 w-7 rounded-full border border-border shadow-sm" style={{ backgroundColor: color }} onClick={() => apply(color)} />)}</div>}<p className="text-[11px] text-muted-foreground">Colors sampled from this design's background, fills, outlines, and shadows.</p></Section>
     <Section title="Gradient colors"><Color label="Start color" value={gradient.a} onChange={(a) => setGradient({ ...gradient, a })} onPick={onPickColor} /><Color label="End color" value={gradient.b} onChange={(b) => setGradient({ ...gradient, b })} onPick={onPickColor} /><Slider label="Gradient angle" value={gradient.angle} min={0} max={360} onChange={(angle) => setGradient({ ...gradient, angle })} /><button className="w-full rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => { setTarget("background"); applyGradient(); }}>Apply gradient to background</button></Section>
@@ -1509,7 +1515,7 @@ function ColorTools({ c, f, selected, commit, onPickColor }: { c: Obj; f: Fab; s
 
 function DrawingPanel({ tool, setTool, color, setColor, size, setSize, style, setStyle, onPickColor }: { tool: DrawingTool; setTool: (tool: DrawingTool) => void; color: string; setColor: (color: string) => void; size: number; setSize: (size: number) => void; style: "solid" | "dashed" | "dotted"; setStyle: (style: "solid" | "dashed" | "dotted") => void; onPickColor: () => Promise<string | null> }) {
   const tools: { id: DrawingTool; label: string }[] = [{ id: "pen", label: "Pen" }, { id: "freehand", label: "Freehand draw" }, { id: "brush", label: "Brush" }, { id: "line", label: "Line tool" }, { id: "highlighter", label: "Highlighter" }, { id: "eraser", label: "Eraser" }];
-  return <div className="flex min-w-max items-start gap-4 pb-2"><Section title="Drawing tools"><div className="grid grid-cols-3 gap-1">{tools.map(({ id, label }) => <button key={id} aria-pressed={tool === id} className={`rounded-md border border-border px-2 py-2 text-xs ${tool === id ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} onClick={() => setTool(tool === id ? null : id)}>{label}</button>)}</div><button className={`w-full rounded-md border border-border py-1.5 text-xs ${tool === null ? "bg-muted" : "hover:bg-muted"}`} onClick={() => setTool(null)}>Done drawing</button></Section><Section title="Brush settings"><Color label="Drawing color" value={color} onChange={setColor} onPick={onPickColor} /><Slider label="Brush size" value={size} min={1} max={100} onChange={setSize} /><label className="block text-xs text-muted-foreground">Stroke style<select className="field mt-1 h-8" value={style} onChange={(e) => setStyle(e.target.value as "solid" | "dashed" | "dotted")}><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label></Section></div>;
+  return <div className="grid w-full max-w-4xl grid-cols-1 gap-3 md:grid-cols-2"><Section title="Drawing tools"><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{tools.map(({ id, label }) => <button key={id} aria-pressed={tool === id} className={`min-h-10 rounded-md border border-border px-2 py-2 text-xs ${tool === id ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} onClick={() => setTool(tool === id ? null : id)}>{label}</button>)}</div><button className={`w-full rounded-md border border-border py-1.5 text-xs ${tool === null ? "bg-muted" : "hover:bg-muted"}`} onClick={() => setTool(null)}>Done drawing</button></Section><Section title="Brush settings"><Color label="Drawing color" value={color} onChange={setColor} onPick={onPickColor} /><Slider label="Brush size" value={size} min={1} max={100} onChange={setSize} /><label className="block text-xs text-muted-foreground">Stroke style<select className="field mt-1 h-8" value={style} onChange={(e) => setStyle(e.target.value as "solid" | "dashed" | "dotted")}><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label></Section></div>;
 }
 
 function DesignEdit({ c, commit }: { c: Obj; commit: () => void }) {
@@ -1559,7 +1565,7 @@ function CanvasPanel({ c, f, proj, commit, addImage, resize, showGrid, setShowGr
   const [h, setH] = useState(proj.height);
   const grad = (n: typeof g) => { setG(n); c.backgroundColor = makeGradient(f, n.a, n.b, n.angle, proj.width, proj.height, "pixels"); commit(); };
   return (
-    <div>
+    <div className="grid w-full max-w-5xl grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
       <Section title="Background">
         <div className="flex items-center gap-2 rounded-lg border border-border p-2">
           {bgImage ? <img className="h-10 w-10 rounded object-cover" src={bgImage.getElement?.()?.src} alt="Current background" /> : <span className="h-10 w-10 rounded border border-border" style={{ background: typeof bg === "string" && bg ? bg : "#ffffff" }} />}
