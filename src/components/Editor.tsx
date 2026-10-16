@@ -5,10 +5,10 @@ import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
   Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Grid2X2,
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil, Sparkles, Send,
-  MousePointer2, Move, Group as GroupIcon, Ungroup, Frame, Grid3X3, Paintbrush, Heading, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
+  Group as GroupIcon, Ungroup, Frame, Grid3X3, Paintbrush, Heading, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
 } from "lucide-react";
 import { Logo } from "./Logo";
-import { getProject, saveProject, deleteProject, type Project } from "@/lib/projects";
+import { getProject, listProjects, saveProject, deleteProject, type Project } from "@/lib/projects";
 import { uploadDesignAsset } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { FontPicker } from "./FontPicker";
@@ -36,7 +36,9 @@ const ICONS: Record<string, string> = {
   Home: "M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z",
   Crown: "M2 7l5 4 5-7 5 7 5-4-2 12H4z",
 };
-type Tab = "props" | "textTools" | "textPresets" | "position" | "fill" | "stroke" | "effects" | "layers" | "shapes" | "stickers" | "icons" | "frames" | "grids" | "decorations" | "bg" | "edit";
+type Tab = "props" | "textTools" | "textPresets" | "position" | "fill" | "stroke" | "effects" | "layers" | "shapes" | "stickers" | "icons" | "frames" | "grids" | "decorations" | "bg" | "edit" | "colors" | "draw";
+type DrawingTool = "pen" | "freehand" | "brush" | "eraser" | "line" | "highlighter" | null;
+type Guide = { axis: "x" | "y"; value: number };
 
 export function Editor({ id }: { id: string }) {
   const nav = useNavigate();
@@ -70,6 +72,15 @@ export function Editor({ id }: { id: string }) {
   const [cropRect, setCropRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [snapAlign, setSnapAlign] = useState(false);
   const snapAlignRef = useRef(false);
+  const [showGrid, setShowGrid] = useState(false);
+  const [showRulers, setShowRulers] = useState(false);
+  const [guides, setGuides] = useState<Guide[]>([]);
+  const guidesRef = useRef<Guide[]>([]);
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>(null);
+  const [drawColor, setDrawColor] = useState("#111111");
+  const [brushSize, setBrushSize] = useState(6);
+  const [strokeStyle, setStrokeStyle] = useState<"solid" | "dashed" | "dotted">("solid");
+  const [clearOpen, setClearOpen] = useState(false);
   const [alignmentGuide, setAlignmentGuide] = useState<{ axis: "x" | "y"; value: number } | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -80,6 +91,7 @@ export function Editor({ id }: { id: string }) {
   const W = () => proj.current?.width ?? 1;
   const H = () => proj.current?.height ?? 1;
   snapAlignRef.current = snapAlign;
+  guidesRef.current = guides;
   const closeVirtualKeyboard = () => { const element = document.activeElement; if (element instanceof HTMLElement && element !== document.body) element.blur(); };
 
   const applyZoom = useCallback((z: number) => {
@@ -190,7 +202,7 @@ export function Editor({ id }: { id: string }) {
       c.on("selection:updated", onSel);
       c.on("selection:cleared", () => force());
       c.on("object:moving", ({ target }: { target?: Obj }) => {
-        if (!snapAlignRef.current || !target || !["textbox", "i-text", "text"].includes(target.type)) return;
+        if (!snapAlignRef.current || !target) return;
         const tolerance = 14 / zoomRef.current, cx = W() / 2, cy = H() / 2;
         const left = target.left ?? 0, top = target.top ?? 0, centerX = left + (target.getScaledWidth?.() ?? 0) / 2, centerY = top + (target.getScaledHeight?.() ?? 0) / 2;
         let guide: { axis: "x" | "y"; value: number } | null = null;
@@ -200,6 +212,10 @@ export function Editor({ id }: { id: string }) {
         else if (Math.abs(centerY - cy) < tolerance) { target.top = cy - (target.getScaledHeight?.() ?? 0) / 2; guide = { axis: "y", value: cy }; }
         else if (Math.abs(top - 0) < tolerance) { target.top = 0; guide = { axis: "y", value: 0 }; }
         else if (Math.abs((top + (target.getScaledHeight?.() ?? 0)) - H()) < tolerance) { target.top = H() - (target.getScaledHeight?.() ?? 0); guide = { axis: "y", value: H() }; }
+        if (!guide) for (const manual of guidesRef.current) {
+          if (manual.axis === "x" && Math.abs(centerX - manual.value) < tolerance) { target.left = manual.value - (target.getScaledWidth?.() ?? 0) / 2; guide = manual; break; }
+          if (manual.axis === "y" && Math.abs(centerY - manual.value) < tolerance) { target.top = manual.value - (target.getScaledHeight?.() ?? 0) / 2; guide = manual; break; }
+        }
         const textObjects = c.getObjects().filter((x: Obj) => x !== target && ["textbox", "i-text", "text"].includes(x.type));
         for (const other of textObjects) {
           if (Math.abs((target.top ?? 0) - (other.top ?? 0)) < tolerance) { target.top = other.top; guide = { axis: "y", value: other.top ?? 0 }; break; }
@@ -234,6 +250,69 @@ export function Editor({ id }: { id: string }) {
       if (fc.current) { void persist(); fc.current.dispose(); fc.current = null; }
     };
   }, [id, fit, snapshot, scheduleSave, persist]);
+
+  useEffect(() => {
+    const c = fc.current, f = fab.current;
+    if (!ready || !c || !f) return;
+    const dash = strokeStyle === "dashed" ? [brushSize * 2, brushSize] : strokeStyle === "dotted" ? [1, brushSize * 1.6] : undefined;
+    c.isDrawingMode = ["pen", "freehand", "brush", "eraser", "highlighter"].includes(drawingTool ?? "");
+    c.selection = !drawingTool;
+    c.skipTargetFind = !!drawingTool;
+    c.defaultCursor = drawingTool ? "crosshair" : "default";
+    let line: Obj | null = null;
+    const onLineDown = (event: Obj) => {
+      if (drawingTool !== "line" || !event.scenePoint) return;
+      const { x, y } = event.scenePoint;
+      line = new f.Line([x, y, x, y], { stroke: drawColor, strokeWidth: brushSize, strokeDashArray: dash ?? null, selectable: false, evented: false, name: "Line" });
+      c.add(line);
+    };
+    const onLineMove = (event: Obj) => {
+      if (!line || !event.scenePoint) return;
+      line.set({ x2: event.scenePoint.x, y2: event.scenePoint.y });
+      line.setCoords();
+      c.requestRenderAll();
+    };
+    const onLineUp = () => {
+      if (!line) return;
+      const finished = line;
+      line = null;
+      finished.set({ selectable: true, evented: true });
+      c.setActiveObject(finished);
+      commit();
+    };
+    const onPathCreated = (event: { path?: Obj }) => {
+      if (drawingTool === "eraser" && event.path) event.path.set({ globalCompositeOperation: "destination-out", name: "Eraser stroke" });
+      if (event.path && drawingTool === "highlighter") event.path.set({ name: "Highlighter stroke" });
+      commit();
+    };
+    if (c.isDrawingMode) {
+      const brush = new f.PencilBrush(c);
+      brush.color = drawingTool === "eraser" ? "#ffffff" : drawingTool === "highlighter" ? withAlpha(drawColor, 0.38) : drawColor;
+      brush.width = drawingTool === "brush" ? brushSize * 1.8 : brushSize;
+      brush.strokeLineCap = drawingTool === "highlighter" ? "square" : "round";
+      brush.strokeLineJoin = "round";
+      brush.strokeDashArray = dash ?? null;
+      c.freeDrawingBrush = brush;
+      c.on("path:created", onPathCreated);
+    }
+    if (drawingTool === "line") {
+      c.on("mouse:down", onLineDown);
+      c.on("mouse:move", onLineMove);
+      c.on("mouse:up", onLineUp);
+    }
+    c.requestRenderAll();
+    return () => {
+      c.off("path:created", onPathCreated);
+      c.off("mouse:down", onLineDown);
+      c.off("mouse:move", onLineMove);
+      c.off("mouse:up", onLineUp);
+      if (line) c.remove(line);
+      c.isDrawingMode = false;
+      c.selection = true;
+      c.skipTargetFind = false;
+      c.defaultCursor = "default";
+    };
+  }, [ready, drawingTool, drawColor, brushSize, strokeStyle, commit]);
 
   const active = (): Obj => fc.current?.getActiveObject() ?? null;
 
@@ -467,6 +546,35 @@ export function Editor({ id }: { id: string }) {
     o.setCoords();
     commit();
   };
+  const spaceEvenly = (axis: "x" | "y") => {
+    const c = fc.current, selected: Obj[] = c?.getActiveObjects?.() ?? [];
+    if (!c || selected.length < 3) return;
+    const bounds = (object: Obj) => object.getBoundingRect();
+    const sorted = [...selected].sort((a, b) => axis === "x" ? bounds(a).left - bounds(b).left : bounds(a).top - bounds(b).top);
+    const first = bounds(sorted[0]), last = bounds(sorted[sorted.length - 1]);
+    const start = axis === "x" ? first.left : first.top;
+    const end = axis === "x" ? last.left + last.width : last.top + last.height;
+    const sizes = sorted.map((object) => axis === "x" ? bounds(object).width : bounds(object).height);
+    const gap = (end - start - sizes.reduce((sum, size) => sum + size, 0)) / (sorted.length - 1);
+    let cursor = start;
+    sorted.forEach((object, index) => {
+      const box = bounds(object), current = axis === "x" ? box.left : box.top;
+      if (index > 0 && index < sorted.length - 1) object.set(axis === "x" ? { left: (object.left ?? 0) + cursor - current } : { top: (object.top ?? 0) + cursor - current });
+      cursor += sizes[index]! + gap;
+      object.setCoords();
+    });
+    commit();
+  };
+  const clearCanvas = () => {
+    const c = fc.current;
+    if (!c) return;
+    snapshot();
+    c.discardActiveObject();
+    c.remove(...c.getObjects());
+    c.requestRenderAll();
+    setClearOpen(false);
+    commit();
+  };
   const groupSelection = () => {
     const c = fc.current, f = fab.current, selection = active();
     if (!c || !f || selection?.type !== "activeselection") return;
@@ -607,6 +715,75 @@ export function Editor({ id }: { id: string }) {
     a.remove();
   };
 
+  const selectedPng = () => {
+    const object = active();
+    return object ? object.toCanvasElement({ multiplier: 2 }).toDataURL("image/png") : null;
+  };
+  const exportSelectedObject = () => {
+    const data = selectedPng(), object = active();
+    if (!data || !object) { alert("Select an object first to export it."); return; }
+    const a = document.createElement("a");
+    a.href = data;
+    a.download = `${(proj.current?.name || "design").replace(/[^\w-]+/g, "_")}_${String(object.name || object.type).replace(/[^\w-]+/g, "_")}.png`;
+    a.click();
+  };
+  const copyPng = async (selectedOnly: boolean) => {
+    const c = fc.current;
+    if (!c) return;
+    const data = selectedOnly ? selectedPng() : c.toDataURL({ format: "png", multiplier: 1 / zoomRef.current });
+    if (!data) { alert("Select an object first to copy it."); return; }
+    const blob = await (await fetch(data)).blob();
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      alert(selectedOnly ? "Selected object copied as a PNG image." : "Design copied as a PNG image.");
+    } catch {
+      const url = URL.createObjectURL(blob), a = document.createElement("a");
+      a.href = url; a.download = `${(proj.current?.name || "design").replace(/[^\w-]+/g, "_")}.png`; a.click();
+      URL.revokeObjectURL(url);
+      alert("Image clipboard access is unavailable, so the PNG was downloaded instead.");
+    }
+  };
+  const shareDesign = async () => {
+    const c = fc.current;
+    if (!c) return;
+    const name = (proj.current?.name || "Gridora design").replace(/[^\w-]+/g, "_");
+    const blob = await (await fetch(c.toDataURL({ format: "png", multiplier: 1 / zoomRef.current })).catch(() => { throw new Error("Could not render this design."); })).blob();
+    const file = new File([blob], `${name}.png`, { type: "image/png" });
+    try {
+      if (navigator.share && navigator.canShare?.({ files: [file] })) await navigator.share({ title: proj.current?.name || "Gridora design", files: [file] });
+      else await copyPng(false);
+    } catch (error) { if (!(error instanceof DOMException && error.name === "AbortError")) alert(error instanceof Error ? error.message : "Could not share this design."); }
+  };
+  const exportLibraryPdf = async () => {
+    const c = fc.current, f = fab.current, current = proj.current;
+    if (!c || !f || !current) return;
+    try {
+      await persist();
+      const pages = await listProjects();
+      if (!pages.length) { alert("There are no saved designs to export."); return; }
+      const { jsPDF } = await import("jspdf");
+      let pdf: InstanceType<typeof jsPDF> | null = null;
+      for (const page of pages) {
+        let image: string;
+        if (page.id === current.id) {
+          image = c.toDataURL({ format: "png", multiplier: 1 / zoomRef.current });
+        } else {
+          const temp = new f.StaticCanvas(document.createElement("canvas"), { width: page.width, height: page.height, backgroundColor: page.background });
+          installDesignAdjustments(temp);
+          if (page.json) await temp.loadFromJSON(page.json as object);
+          temp.renderAll();
+          image = temp.toDataURL({ format: "png", multiplier: 1 });
+          await temp.dispose();
+        }
+        const orientation = page.width > page.height ? "l" : "p";
+        if (!pdf) pdf = new jsPDF({ orientation, unit: "px", format: [page.width, page.height], hotfixes: ["px_scaling"] });
+        else pdf.addPage([page.width, page.height], orientation);
+        pdf.addImage(image, "PNG", 0, 0, page.width, page.height);
+      }
+      pdf?.save(`${current.name.replace(/[^\w-]+/g, "_")}_all_designs.pdf`);
+    } catch (error) { console.error(error); alert(error instanceof Error ? `Multi-page PDF export failed: ${error.message}` : "Multi-page PDF export failed."); }
+  };
+
   if (missing)
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4">
@@ -622,10 +799,11 @@ export function Editor({ id }: { id: string }) {
   const isTextSelected = !!o && ["textbox", "i-text", "text"].includes(o.type);
   const isImageSelected = !!o && o.type === "image";
   const isElementSelected = !!o;
-  const standaloneTabs: Tab[] = ["layers", "edit", "position", "shapes", "stickers", "icons", "textPresets", "frames", "grids", "decorations"];
+  const standaloneTabs: Tab[] = ["layers", "edit", "position", "shapes", "stickers", "icons", "textPresets", "frames", "grids", "decorations", "colors", "draw"];
   const contextualTabs: Tab[] = standaloneTabs.includes(tab) ? [tab] : isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isImageSelected ? ["props", "position", "stroke", "effects", "frames"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : ["bg", "layers", "edit"];
-  const tabLabel: Record<Tab, string> = { props: "Properties", textTools: "Text tools", textPresets: "Text presets", position: "Position & align", fill: "Fill", stroke: "Stroke", effects: "Effects & filters", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons & illustrations", frames: "Frames", grids: "Grids", decorations: "Decorations", bg: "Canvas", edit: "Adjustments" };
-  const tabIcon: Record<Tab, ReactNode> = { props: <SlidersHorizontal />, textTools: <Type />, textPresets: <Heading />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, frames: <Frame />, grids: <Grid3X3 />, decorations: <Sparkles />, bg: <PaintBucket />, edit: <Paintbrush /> };
+  const tabLabel: Record<Tab, string> = { props: "Properties", textTools: "Text tools", textPresets: "Text presets", position: "Position & align", fill: "Fill", stroke: "Stroke", effects: "Effects & filters", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons & illustrations", frames: "Frames", grids: "Grids", decorations: "Decorations", bg: "Canvas", edit: "Adjustments", colors: "Color tools", draw: "Drawing tools" };
+  const tabIcon: Record<Tab, ReactNode> = { props: <SlidersHorizontal />, textTools: <Type />, textPresets: <Heading />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, frames: <Frame />, grids: <Grid3X3 />, decorations: <Sparkles />, bg: <PaintBucket />, edit: <Paintbrush />, colors: <PaintBucket />, draw: <Paintbrush /> };
+  const chooseDrawingTool = (tool: DrawingTool) => { setHand(false); setDrawingTool(tool); };
   const selectionBounds = o?.getBoundingRect?.();
   const canvasBounds = canvasEl.current?.getBoundingClientRect();
   const wrapBounds = wrapRef.current?.getBoundingClientRect();
@@ -655,9 +833,9 @@ export function Editor({ id }: { id: string }) {
     { icon: <CalendarDays />, label: "Date", on: addDate },
   ];
   const mainTools: { icon: ReactNode; label: string; on: () => void }[] = [
-    { icon: <MousePointer2 />, label: "Select", on: () => { setHand(false); if (fc.current) { fc.current.selection = true; fc.current.defaultCursor = "default"; fc.current.hoverCursor = "move"; } } },
-    { icon: <Move />, label: "Move", on: () => { setHand(false); if (fc.current) { fc.current.selection = true; fc.current.defaultCursor = "move"; fc.current.hoverCursor = "move"; } } },
     { icon: <Plus />, label: "Add", on: () => { setAdding(true); setPanelOpen(false); } },
+    { icon: <PaintBucket />, label: "Colors", on: () => openTab("colors") },
+    { icon: <Paintbrush />, label: "Draw", on: () => openTab("draw") },
     { icon: <Scan />, label: "Position", on: () => openTab("position") },
     { icon: <Frame />, label: "Crop / frame", on: () => openTab(isImageSelected ? "props" : "frames") },
     { icon: <Layers />, label: "Layers", on: () => openTab("layers") },
@@ -681,7 +859,7 @@ export function Editor({ id }: { id: string }) {
           key={ready ? "r" : "n"}
           onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }}
         />
-        <button title="Smart alignment" aria-label="Smart alignment" onClick={() => setSnapAlign((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${snapAlign ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Grid2X2 className="h-4 w-4" /> <span className="hidden sm:inline">Align</span></button>
+        <button title="Snap to guides" aria-label="Snap to guides" onClick={() => setSnapAlign((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${snapAlign ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Grid2X2 className="h-4 w-4" /> <span className="hidden sm:inline">Snap</span></button>
         <button title="AI design assistant" aria-label="AI design assistant" onClick={() => setAiOpen((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${aiOpen ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Sparkles className="h-4 w-4" /><span className="hidden sm:inline">Assistant</span></button>
         <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
         <div className="ml-auto flex items-center gap-1">
@@ -692,10 +870,16 @@ export function Editor({ id }: { id: string }) {
               <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
             </button>
             {exportOpen && (
-              <div className="absolute right-0 top-11 z-50 w-52 rounded-xl border border-border bg-popover p-1 shadow-xl">
-                {([["png", "PNG"], ["tpng", "Transparent PNG"], ["jpg", "JPG"], ["pdf", "PDF"]] as const).map(([k, l]) => (
+              <div className="absolute right-0 top-11 z-50 max-h-[70vh] w-64 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-xl">
+                {([ ["png", "PNG"], ["tpng", "Transparent PNG"], ["jpg", "JPG"], ["pdf", "PDF"]] as const).map(([k, l]) => (
                   <button key={k} onClick={() => exportAs(k)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">{l}</button>
                 ))}
+                <div className="my-1 border-t border-border" />
+                <button disabled={!o} onClick={exportSelectedObject} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-40">Export selected object (PNG)</button>
+                <button onClick={() => { void exportLibraryPdf(); setExportOpen(false); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">Export all saved designs as multi-page PDF</button>
+                <button onClick={() => { void copyPng(!!o); setExportOpen(false); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">Copy image</button>
+                <button onClick={() => { void copyPng(false); setExportOpen(false); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">Copy as PNG</button>
+                <button onClick={() => { void shareDesign(); setExportOpen(false); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">Share design image</button>
               </div>
             )}
           </div>
@@ -726,8 +910,11 @@ export function Editor({ id }: { id: string }) {
             className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(24vh+4rem)] md:bottom-[22vh]" : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
           >
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
-              <div className={`checker shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
+              <div className={`checker relative shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
                 <canvas ref={canvasEl} />
+                {showGrid && <div className="pointer-events-none absolute inset-0 z-10" aria-hidden="true" style={{ backgroundImage: "linear-gradient(to right, rgba(100,116,139,.23) 1px, transparent 1px), linear-gradient(to bottom, rgba(100,116,139,.23) 1px, transparent 1px)", backgroundSize: `${Math.max(8, 20 * zoom)}px ${Math.max(8, 20 * zoom)}px` }} />}
+                {guides.map((guide, index) => <div key={`${guide.axis}-${index}`} className="pointer-events-none absolute z-20 bg-fuchsia-500/80" aria-hidden="true" style={guide.axis === "x" ? { left: guide.value * zoom - 1, top: 0, bottom: 0, width: 2 } : { top: guide.value * zoom - 1, left: 0, right: 0, height: 2 }} />)}
+                {showRulers && <div className="pointer-events-none absolute inset-0 z-30" aria-hidden="true"><div className="absolute left-0 right-0 top-0 flex h-4 overflow-hidden border-b border-slate-500/40 bg-slate-100/85 text-[8px] text-slate-700">{Array.from({ length: Math.ceil(W() / 50) }, (_, i) => <span key={i} className="relative h-full shrink-0 border-l border-slate-500/50 pl-0.5" style={{ width: 50 * zoom }}>{i * 50}</span>)}</div><div className="absolute bottom-0 left-0 top-0 flex w-4 flex-col overflow-hidden border-r border-slate-500/40 bg-slate-100/85 text-[8px] text-slate-700">{Array.from({ length: Math.ceil(H() / 50) }, (_, i) => <span key={i} className="relative w-full shrink-0 border-t border-slate-500/50" style={{ height: 50 * zoom }}><span className="absolute left-0 top-0">{i * 50}</span></span>)}</div></div>}
               </div>
             </div>
           </div>
@@ -771,6 +958,8 @@ export function Editor({ id }: { id: string }) {
             {ready && tab === "grids" && <Grid><Tile onClick={addGrid}><Grid3X3 className="h-7 w-7 text-primary" /><span className="text-[10px]">2 × 2 photo grid</span></Tile></Grid>}
             {ready && tab === "decorations" && <Grid><Tile onClick={addDecoration}><Sparkles className="h-7 w-7 text-primary" /><span className="text-[10px]">Star ornament</span></Tile><Tile onClick={() => addShape("star")}><Star className="h-7 w-7 text-primary" /><span className="text-[10px]">Star shape</span></Tile><Tile onClick={() => addShape("line")}><span className="text-2xl text-primary">— — —</span><span className="text-[10px]">Divider</span></Tile></Grid>}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
+            {ready && fc.current && fab.current && tab === "colors" && <ColorTools c={fc.current} f={fab.current} selected={o} commit={commit} onPickColor={pickColorFromCanvas} />}
+            {ready && tab === "draw" && <DrawingPanel tool={drawingTool} setTool={chooseDrawingTool} color={drawColor} setColor={setDrawColor} size={brushSize} setSize={setBrushSize} style={strokeStyle} setStyle={setStrokeStyle} onPickColor={pickColorFromCanvas} />}
             {ready && tab === "layers" && (
               <div className="space-y-1">
                 {objects.length === 0 && <p className="text-sm text-muted-foreground">No layers yet. Add text, images or shapes.</p>}
@@ -791,9 +980,10 @@ export function Editor({ id }: { id: string }) {
                     <IconBtn label="Send to back" onClick={() => order("bottom")}><ChevronsDown /></IconBtn>
                   </div>
                 )}
+                {o?.type === "activeselection" && (fc.current?.getActiveObjects?.().length ?? 0) >= 3 && <div className="grid grid-cols-2 gap-1 pt-2"><button className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => spaceEvenly("x")}>Space evenly horizontally</button><button className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => spaceEvenly("y")}>Space evenly vertically</button></div>}
               </div>
             )}
-            {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} />}
+            {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} showGrid={showGrid} setShowGrid={setShowGrid} showRulers={showRulers} setShowRulers={setShowRulers} guides={guides} setGuides={setGuides} snapAlign={snapAlign} setSnapAlign={setSnapAlign} onClear={() => setClearOpen(true)} />}
             {ready && tab === "shapes" && (
               <Grid>
                 {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow"].map((k) => (
@@ -849,6 +1039,12 @@ export function Editor({ id }: { id: string }) {
         <AlertDialogContent className="w-[calc(100%-2rem)] rounded-lg">
           <AlertDialogHeader><AlertDialogTitle>Make the background transparent?</AlertDialogTitle><AlertDialogDescription>This removes the canvas background color or gradient. Your images, text and other layers stay unchanged.</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { if (!fc.current) return; snapshot(); fc.current.backgroundColor = ""; commit(); }}>Make transparent</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={clearOpen} onOpenChange={setClearOpen}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] max-w-md rounded-lg">
+          <AlertDialogHeader><AlertDialogTitle>Clear all canvas objects?</AlertDialogTitle><AlertDialogDescription>This removes every object from this design. Your canvas background remains. You can undo the clear action.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={clearCanvas}>Clear canvas</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
@@ -1195,7 +1391,7 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onP
     <div className="grid grid-cols-2 gap-2"><NumberField label="X" value={o.left ?? 0} onChange={(v) => set({ left: v })} /><NumberField label="Y" value={o.top ?? 0} onChange={(v) => set({ top: v })} /></div>
     <div className="grid grid-cols-2 gap-2"><NumberField label="Width" value={o.getScaledWidth?.() ?? o.width ?? 0} onChange={(v) => set({ scaleX: v / Math.max(1, o.width ?? 1) })} /><NumberField label="Height" value={o.getScaledHeight?.() ?? o.height ?? 0} onChange={(v) => set({ scaleY: v / Math.max(1, o.height ?? 1) })} /></div>
     {isText && <NumberField label="Padding" value={o.padding ?? 0} onChange={(v) => set({ padding: v })} />}
-    <Slider label="Rotation" value={o.angle ?? 0} min={-180} max={180} onChange={(v) => set({ angle: v })} /><Slider label="Opacity (%)" value={(o.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => set({ opacity: v / 100 })} />
+    <Slider label="Rotation" value={o.angle ?? 0} min={-180} max={180} onChange={(v) => set({ angle: v })} /><Slider label="Layer transparency (%)" value={(o.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => set({ opacity: v / 100 })} />
     <div className="flex gap-1"><IconBtn label="Flip horizontal" onClick={() => set({ flipX: !o.flipX })}><FlipHorizontal /></IconBtn><IconBtn label="Flip vertical" onClick={() => set({ flipY: !o.flipY })}><FlipVertical /></IconBtn><button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ angle: 0 })}>Reset rotation</button></div>
   </Section>;
   if (mode === "fill") return <Section title="Fill">
@@ -1203,13 +1399,14 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onP
     <div className="flex gap-1 text-xs"><button className="flex-1 rounded-md bg-muted py-1.5" onClick={() => set({ fill: toHex(o.fill, "#c6f432") })}>Colour</button><button className="flex-1 rounded-md border border-border py-1.5" onClick={() => set({ fill: makeGradient(f, "#c6f432", "#ffffff", 0) })}>Gradient</button></div>
     {typeof o.fill === "string" && <Color label="Fill colour" value={toHex(o.fill, "#c6f432")} onChange={(v) => set({ fill: withAlpha(v, fillAlpha) })} onPick={onPickColor} />}
   </Section>;
-  if (mode === "stroke") return <Section title="Stroke">
+  if (mode === "stroke") return <Section title="Outline / stroke">
     <Slider label="Width" value={o.strokeWidth ?? 0} min={0} max={100} onChange={(v) => set({ strokeWidth: v, stroke: o.stroke ?? "#111111" })} /><Slider label="Opacity (%)" value={strokeAlpha * 100} min={0} max={100} onChange={(v) => set({ stroke: withAlpha(o.stroke, v / 100) })} />
     <div className="flex gap-1 text-xs"><button className="flex-1 rounded-md bg-muted py-1.5" onClick={() => set({ stroke: toHex(o.stroke, "#111111") })}>Colour</button><button className="flex-1 rounded-md border border-border py-1.5" onClick={() => set({ stroke: makeGradient(f, "#111111", "#c6f432", 0) })}>Gradient</button></div>
     {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} onPick={onPickColor} />}
   </Section>;
   return <Section title="Effects">
-    {o.type === "image" && <><p className="text-xs font-semibold">Background eraser</p><div className="flex gap-1 text-xs">{([["smart", "Smart AI"], ["auto", "Edges"], ["color", "Colour"]] as const).map(([k, l]) => <button key={k} disabled={!!eraseBusy} className={`flex-1 rounded-md py-1.5 ${eraseMode === k ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode(k)}>{l}</button>)}</div><p className="text-[11px] text-muted-foreground">{eraseMode === "smart" ? "Best for people, products and pets. Detects the subject and removes everything else." : eraseMode === "auto" ? "Removes the plain background touching the photo edges." : "Removes one colour everywhere in the photo."}</p>{eraseMode === "color" && <div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button type="button" className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={async () => { const c = await onPickColor(); if (c) setEraseColor(c); }}>Pick from canvas</button></div>}{eraseMode !== "smart" && <Slider label="Strength" value={eraseTol} min={0} max={100} onChange={setEraseTol} />}<button disabled={!!eraseBusy} className="w-full rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60" onClick={() => onEraseBackground(eraseMode, eraseColor, eraseTol)}>{eraseBusy ?? "Erase background"}</button><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
+    <div className="grid grid-cols-2 gap-1"><button className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => shadowSet({ color: "#c6f432", blur: 24, offsetX: 0, offsetY: 0 })}>Glow</button><button className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => shadowSet({ color: "rgba(0,0,0,0.28)", blur: 18, offsetX: 0, offsetY: 8 })}>Lift</button></div>
+    {o.type === "image" && <><p className="text-xs font-semibold">Background effects / removal</p><div className="flex gap-1 text-xs">{([["smart", "Smart AI"], ["auto", "Edges"], ["color", "Colour"]] as const).map(([k, l]) => <button key={k} disabled={!!eraseBusy} className={`flex-1 rounded-md py-1.5 ${eraseMode === k ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode(k)}>{l}</button>)}</div><p className="text-[11px] text-muted-foreground">{eraseMode === "smart" ? "Best for people, products and pets. Detects the subject and removes everything else." : eraseMode === "auto" ? "Removes the plain background touching the photo edges." : "Removes one colour everywhere in the photo."}</p>{eraseMode === "color" && <div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button type="button" className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={async () => { const c = await onPickColor(); if (c) setEraseColor(c); }}>Pick from canvas</button></div>}{eraseMode !== "smart" && <Slider label="Strength" value={eraseTol} min={0} max={100} onChange={setEraseTol} />}<button disabled={!!eraseBusy} className="w-full rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60" onClick={() => onEraseBackground(eraseMode, eraseColor, eraseTol)}>{eraseBusy ?? "Erase background"}</button><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
     {o.type === "image" && <ImageFilters key={o.canvas?.getObjects?.().indexOf(o) ?? "selected-image"} o={o} f={f} commit={commit} />}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
@@ -1221,6 +1418,8 @@ function ImageFilters({ o, f, commit }: { o: Obj; f: Fab; commit: () => void }) 
   type FilterOptions = Record<string, unknown>;
   type FilterConstructor = new (options?: FilterOptions) => Obj;
   const filters = f.filters as unknown as Record<string, FilterConstructor>;
+  const [duotoneColor, setDuotoneColor] = useState("#c6f432");
+  const [duotoneStrength, setDuotoneStrength] = useState(0.55);
   const existing = (name: string, property: string) => Number((o.filters ?? []).find((filter: Obj) => filter.type === name)?.[property] ?? 0);
   const replaceFilter = (name: string, property: string, value: number) => {
     const next = (o.filters ?? []).filter((filter: Obj) => filter.type !== name);
@@ -1247,8 +1446,16 @@ function ImageFilters({ o, f, commit }: { o: Obj; f: Fab; commit: () => void }) 
     o.applyFilters();
     commit();
   };
-  return <Section title="Image filters & adjustments">
-    <div className="grid grid-cols-4 gap-1">{(["Original", "Mono", "Sepia", "Vintage"] as const).map((name) => <button key={name} className="rounded-md border border-border px-1 py-1.5 text-[11px] hover:bg-muted" onClick={() => preset(name)}>{name}</button>)}</div>
+  const duotone = () => {
+    const Gray = filters["Grayscale"], Blend = filters["BlendColor"];
+    if (!Gray || !Blend) return;
+    o.filters = [new Gray(), new Blend({ color: duotoneColor, mode: "tint", alpha: duotoneStrength })];
+    o.applyFilters(); commit();
+  };
+  return <Section title="Color effects & image filters">
+    <div className="grid grid-cols-5 gap-1">{(["Original", "Mono", "Sepia", "Vintage"] as const).map((name) => <button key={name} className="rounded-md border border-border px-1 py-1.5 text-[11px] hover:bg-muted" onClick={() => preset(name)}>{name}</button>)}<button className="rounded-md border border-border px-1 py-1.5 text-[11px] hover:bg-muted" onClick={duotone}>Duotone</button></div>
+    <Color label="Duotone tint" value={duotoneColor} onChange={setDuotoneColor} />
+    <Slider label="Duotone strength" value={duotoneStrength} min={0} max={1} step={0.01} onChange={setDuotoneStrength} />
     <Slider label="Brightness" value={existing("Brightness", "brightness")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Brightness", "brightness", v)} />
     <Slider label="Contrast" value={existing("Contrast", "contrast")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Contrast", "contrast", v)} />
     <Slider label="Saturation" value={existing("Saturation", "saturation")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("Saturation", "saturation", v)} />
@@ -1256,6 +1463,46 @@ function ImageFilters({ o, f, commit }: { o: Obj; f: Fab; commit: () => void }) 
     <Slider label="Temperature / tint" value={existing("HueRotation", "rotation")} min={-1} max={1} step={0.01} onChange={(v) => replaceFilter("HueRotation", "rotation", v)} />
     <button className="w-full rounded-md border border-border py-1.5 text-xs hover:bg-muted" onClick={sharpen}>Sharpen image</button>
   </Section>;
+}
+
+function colorsInDocument(c: Obj): string[] {
+  const found = new Set<string>(["#c6f432", "#111111", "#ffffff"]);
+  const add = (value: unknown) => {
+    if (typeof value === "string") {
+      if (/^#[0-9a-f]{6}$/i.test(value)) found.add(value.toLowerCase());
+      const match = value.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+      if (match) found.add(`#${[1, 2, 3].map((i) => Math.max(0, Math.min(255, Number(match[i]))).toString(16).padStart(2, "0")).join("")}`);
+    } else if (value && typeof value === "object" && Array.isArray((value as Obj).colorStops)) {
+      for (const stop of (value as Obj).colorStops) add(stop.color);
+    }
+  };
+  add(c.backgroundColor);
+  for (const object of c.getObjects?.() ?? []) { add(object.fill); add(object.stroke); add(object.shadow?.color); }
+  return [...found].slice(0, 24);
+}
+
+function ColorTools({ c, f, selected, commit, onPickColor }: { c: Obj; f: Fab; selected: Obj | null; commit: () => void; onPickColor: () => Promise<string | null> }) {
+  const [target, setTarget] = useState<"fill" | "stroke" | "background">("fill");
+  const [gradient, setGradient] = useState({ a: "#0f172a", b: "#c6f432", angle: 45 });
+  const colors = colorsInDocument(c);
+  const base = target === "background" || !selected ? toHex(c.backgroundColor, "#ffffff") : toHex(selected[target], "#111111");
+  const apply = (color: string) => {
+    if (target === "background" || !selected) { c.backgroundImage = undefined; c.backgroundColor = color; }
+    else if (target === "fill") selected.set({ fill: withAlpha(color, alphaOf(selected.fill)) });
+    else selected.set({ stroke: color, strokeWidth: selected.strokeWidth || 2 });
+    c.requestRenderAll(); commit();
+  };
+  const applyGradient = () => { c.backgroundImage = undefined; c.backgroundColor = makeGradient(f, gradient.a, gradient.b, gradient.angle, c.getWidth(), c.getHeight(), "pixels"); c.requestRenderAll(); commit(); };
+  return <div className="flex min-w-max items-start gap-4 pb-2">
+    <Section title="Color picker"><div className="flex gap-1">{(["fill", "stroke", "background"] as const).map((kind) => <button key={kind} aria-pressed={target === kind} className={`flex-1 rounded-md border border-border px-2 py-1.5 text-xs capitalize ${target === kind ? "bg-muted text-foreground" : "text-muted-foreground"}`} onClick={() => setTarget(kind)}>{kind}</button>)}</div><Color label={target === "background" || !selected ? "Solid background color" : `${target} color`} value={base} onChange={apply} onPick={onPickColor} />{selected && <Slider label="Layer transparency (%)" value={(selected.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => { selected.set({ opacity: v / 100 }); selected.canvas?.requestRenderAll(); commit(); }} />}</Section>
+    <Section title="Document colors">{colors.length === 0 ? <p className="text-xs text-muted-foreground">Add colors to the canvas to build this palette.</p> : <div className="flex flex-wrap gap-2">{colors.map((color) => <button key={color} type="button" title={color} aria-label={`Apply document color ${color}`} className="h-7 w-7 rounded-full border border-border shadow-sm" style={{ backgroundColor: color }} onClick={() => apply(color)} />)}</div>}<p className="text-[11px] text-muted-foreground">Colors sampled from this design's background, fills, outlines, and shadows.</p></Section>
+    <Section title="Gradient colors"><Color label="Start color" value={gradient.a} onChange={(a) => setGradient({ ...gradient, a })} onPick={onPickColor} /><Color label="End color" value={gradient.b} onChange={(b) => setGradient({ ...gradient, b })} onPick={onPickColor} /><Slider label="Gradient angle" value={gradient.angle} min={0} max={360} onChange={(angle) => setGradient({ ...gradient, angle })} /><button className="w-full rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted" onClick={() => { setTarget("background"); applyGradient(); }}>Apply gradient to background</button></Section>
+  </div>;
+}
+
+function DrawingPanel({ tool, setTool, color, setColor, size, setSize, style, setStyle, onPickColor }: { tool: DrawingTool; setTool: (tool: DrawingTool) => void; color: string; setColor: (color: string) => void; size: number; setSize: (size: number) => void; style: "solid" | "dashed" | "dotted"; setStyle: (style: "solid" | "dashed" | "dotted") => void; onPickColor: () => Promise<string | null> }) {
+  const tools: { id: DrawingTool; label: string }[] = [{ id: "pen", label: "Pen" }, { id: "freehand", label: "Freehand draw" }, { id: "brush", label: "Brush" }, { id: "line", label: "Line tool" }, { id: "highlighter", label: "Highlighter" }, { id: "eraser", label: "Eraser" }];
+  return <div className="flex min-w-max items-start gap-4 pb-2"><Section title="Drawing tools"><div className="grid grid-cols-3 gap-1">{tools.map(({ id, label }) => <button key={id} aria-pressed={tool === id} className={`rounded-md border border-border px-2 py-2 text-xs ${tool === id ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`} onClick={() => setTool(tool === id ? null : id)}>{label}</button>)}</div><button className={`w-full rounded-md border border-border py-1.5 text-xs ${tool === null ? "bg-muted" : "hover:bg-muted"}`} onClick={() => setTool(null)}>Done drawing</button></Section><Section title="Brush settings"><Color label="Drawing color" value={color} onChange={setColor} onPick={onPickColor} /><Slider label="Brush size" value={size} min={1} max={100} onChange={setSize} /><label className="block text-xs text-muted-foreground">Stroke style<select className="field mt-1 h-8" value={style} onChange={(e) => setStyle(e.target.value as "solid" | "dashed" | "dotted")}><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label></Section></div>;
 }
 
 function DesignEdit({ c, commit }: { c: Obj; commit: () => void }) {
@@ -1296,7 +1543,7 @@ function ImageCrop({ o, set }: { o: Obj; set: (p: Record<string, unknown>) => vo
 }
 
 /* ---------- Canvas panel ---------- */
-function CanvasPanel({ c, f, proj, commit, addImage, resize }: { c: Obj; f: Fab; proj: Project; commit: () => void; addImage: () => void; resize: (w: number, h: number) => void }) {
+function CanvasPanel({ c, f, proj, commit, addImage, resize, showGrid, setShowGrid, showRulers, setShowRulers, guides, setGuides, snapAlign, setSnapAlign, onClear }: { c: Obj; f: Fab; proj: Project; commit: () => void; addImage: () => void; resize: (w: number, h: number) => void; showGrid: boolean; setShowGrid: (value: boolean) => void; showRulers: boolean; setShowRulers: (value: boolean) => void; guides: Guide[]; setGuides: (value: Guide[]) => void; snapAlign: boolean; setSnapAlign: (value: boolean) => void; onClear: () => void }) {
   const bg = c.backgroundColor;
   const bgImage = c.backgroundImage;
   const mode = !bg ? "none" : typeof bg === "string" ? "solid" : "gradient";
@@ -1336,6 +1583,14 @@ function CanvasPanel({ c, f, proj, commit, addImage, resize }: { c: Obj; f: Fab;
           <input type="number" className="field" value={h} onChange={(e) => setH(+e.target.value)} aria-label="Height" />
         </div>
         <button className="w-full rounded-md bg-secondary py-2 text-xs font-medium hover:opacity-90" onClick={() => resize(Math.min(5000, Math.max(50, w)), Math.min(5000, Math.max(50, h)))}>Apply size</button>
+      </Section>
+      <Section title="Canvas tools">
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> Show grid</label>
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={showRulers} onChange={(e) => setShowRulers(e.target.checked)} /> Show rulers</label>
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={snapAlign} onChange={(e) => setSnapAlign(e.target.checked)} /> Snap to guides</label>
+        <div className="grid grid-cols-2 gap-1"><button className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={() => setGuides([...guides, { axis: "x", value: proj.width / 2 }])}>Add vertical guide</button><button className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={() => setGuides([...guides, { axis: "y", value: proj.height / 2 }])}>Add horizontal guide</button></div>
+        {guides.map((guide, index) => <div key={`${guide.axis}-${index}`} className="flex items-end gap-2"><div className="flex-1"><NumberField label={`${guide.axis === "x" ? "Vertical" : "Horizontal"} guide position`} value={guide.value} onChange={(value) => setGuides(guides.map((item, i) => i === index ? { ...item, value: Math.max(0, Math.min(guide.axis === "x" ? proj.width : proj.height, value)) } : item))} /></div><button className="mb-1 rounded border border-border px-2 py-1 text-xs text-destructive" aria-label="Remove guide" onClick={() => setGuides(guides.filter((_, i) => i !== index))}>Remove</button></div>)}
+        <Button variant="outline" className="w-full text-destructive" onClick={onClear}><Trash2 /> Clear canvas</Button>
       </Section>
     </div>
   );
