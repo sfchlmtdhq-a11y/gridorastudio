@@ -14,6 +14,7 @@ import { FontPicker } from "./FontPicker";
 import { DEFAULT_ADJUSTMENTS, installDesignAdjustments, type DesignAdjustments } from "@/lib/design-adjustments";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
 import { askGeminiDesignAssistant, type GeminiAction } from "@/lib/gemini";
+import { EditorToolDetails } from "./EditorToolDetails";
 
 type Fab = typeof import("fabric");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -77,6 +78,7 @@ export function Editor({ id }: { id: string }) {
   const [bottomMode, setBottomMode] = useState<"text" | "elements" | "background" | "filters">("text");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const askAssistant = useServerFn(askGeminiDesignAssistant);
 
   const W = () => proj.current?.width ?? 1;
@@ -211,13 +213,13 @@ export function Editor({ id }: { id: string }) {
         target.setCoords(); setAlignmentGuide(guide); if (guide) window.setTimeout(() => setAlignmentGuide(null), 200);
       });
       c.on("mouse:down", ({ target }: { target?: Obj }) => {
-        if (!target) { tapRef.current = { target: null, count: 0 }; setTab("bg"); setPanelOpen(true); return; }
+        if (!target) { tapRef.current = { target: null, count: 0 }; setBottomMode("background"); setSelectedTool(null); setPanelOpen(true); return; }
         if (tapRef.current.target === target) tapRef.current.count += 1;
         else tapRef.current = { target, count: 1 };
         if (tapRef.current.count < 3) closeVirtualKeyboard();
         if (tapRef.current.count === 1 && ["textbox", "i-text", "text"].includes(target.type)) { setPanelOpen(false); }
         setPanelOpen(tapRef.current.count >= 2);
-        if (tapRef.current.count >= 2) setTab("props");
+        if (tapRef.current.count >= 2) { setBottomMode(["textbox", "i-text", "text"].includes(target.type) ? "text" : "elements"); setSelectedTool(null); }
         force();
       });
       c.on("mouse:dblclick", ({ target }: { target?: Obj }) => {
@@ -605,7 +607,7 @@ export function Editor({ id }: { id: string }) {
   const requestHome = (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setSaveHomeOpen(true); };
   const saveProjectAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
   const exportAndHome = async (kind: "png" | "jpg" | "pdf") => { await exportAs(kind); setSaveHomeOpen(false); nav({ to: "/" }); };
-  const openBottom = (mode: "text" | "elements" | "background" | "filters") => { setBottomMode(mode); setPanelOpen(true); if (mode === "background") setTab("bg"); if (mode === "filters") setTab("edit"); if (mode === "elements") setTab("shapes"); };
+  const openBottom = (mode: "text" | "elements" | "background" | "filters") => { setBottomMode(mode); setSelectedTool(null); setPanelOpen(true); if (mode === "background") setTab("bg"); if (mode === "filters") setTab("edit"); if (mode === "elements") setTab("shapes"); };
   const shareDesign = async () => { if (navigator.share) { await navigator.share({ title: proj.current?.name ?? "Gridora design", text: "A design made in Gridora Studio" }).catch(() => undefined); } else setExportOpen(true); };
   const shareTo = (target: string) => { const url = encodeURIComponent(window.location.href); const text = encodeURIComponent(proj.current?.name ?? "My Gridora design"); const links: Record<string, string> = { Facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`, Twitter: `https://twitter.com/intent/tweet?text=${text}&url=${url}`, Google: `https://www.google.com/search?q=${text}`, Whatsapp: `https://wa.me/?text=${text}%20${url}`, Instagram: "https://www.instagram.com/" }; if (target === "Save to gallery") { void exportAs("png"); return; } window.open(links[target], "_blank", "noopener,noreferrer"); };
   const topOptions = [
@@ -616,6 +618,26 @@ export function Editor({ id }: { id: string }) {
   const bottomTools: { icon: ReactNode; label: string; mode: "text" | "elements" | "background" | "filters" }[] = [
     { icon: <Type />, label: "Text", mode: "text" }, { icon: <Shapes />, label: "Elements", mode: "elements" }, { icon: <PaintBucket />, label: "Background", mode: "background" }, { icon: <Sparkles />, label: "Filters", mode: "filters" },
   ];
+  const toolRows: Record<typeof bottomMode, string[]> = {
+    text: o ? ["Edit", "Delete", "Copy", "To front", "To back", "Position", "Relative position", "Size padding", "Colour", "Opacity", "Rotate", "Mask", "Font", "Style", "Curve", "Background", "Align", "Spacing", "Line spacing", "Stroke", "Shadow", "Inner shadow", "3D shadow", "Reflection"] : ["Add text"],
+    elements: o ? ["Delete", "Crop", "Copy", "To front", "To back", "Position", "Relative size", "Color", "Opacity", "Color filters", "Stroke", "Eraser", "Erase colour", "Mask", "Rotate", "3D rotate", "Perspective", "Shadow", "Inner shadow"] : ["Stickers", "Import", "Draw", "Shapes", "Bezier", "Arrow"],
+    background: ["Color", "Transparent", "Image size", "Image", "From gallery", "From camera"],
+    filters: ["Rotate", "Noise", "Brightness", "Contrast", "Hue", "Saturation"],
+  };
+  const toolIcon = (label: string) => label === "Delete" ? <Trash2 /> : label.includes("Copy") ? <Copy /> : label.includes("front") ? <ChevronsUp /> : label.includes("back") ? <ChevronsDown /> : label.includes("Position") ? <Scan /> : label.includes("Color") || label === "Colour" || label === "Background" ? <PaintBucket /> : label.includes("Shadow") ? <Star /> : label.includes("Rotate") ? <RotateCcw /> : label.includes("Import") || label.includes("gallery") || label === "Image" ? <ImagePlus /> : label === "Shapes" ? <Shapes /> : label === "Stickers" ? <Smile /> : label === "Arrow" ? <ArrowRight /> : label === "Draw" || label === "Bezier" ? <Pencil /> : label === "Add text" || label === "Edit" || label === "Font" ? <Type /> : label === "Opacity" || label === "Transparency" ? <Scan /> : label === "Align" ? <AlignCenter /> : label === "Save" ? <Save /> : label === "Share" ? <Share2 /> : <SlidersHorizontal />;
+  const runTool = (tool: string) => {
+    setSelectedTool(tool);
+    if (tool === "Add text") { addText(); setSelectedTool(null); }
+    else if (tool === "Delete") del();
+    else if (tool === "Copy") void dup();
+    else if (tool === "To front") order("top");
+    else if (tool === "To back") order("bottom");
+    else if (tool === "Stickers" || tool === "Shapes") { setTab(tool === "Stickers" ? "stickers" : "shapes"); }
+    else if (tool === "Import" || tool === "From gallery" || tool === "Image") fileRef.current?.click();
+    else if (tool === "From camera") { fileRef.current?.setAttribute("capture", "environment"); fileRef.current?.click(); }
+    else if (tool === "Background") openTab("bg");
+    else if (tool === "Image size") openBottom("background");
+  };
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden">
@@ -625,7 +647,7 @@ export function Editor({ id }: { id: string }) {
           <input className="min-w-0 max-w-[35vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs" defaultValue={proj.current?.name} key={ready ? "r" : "n"} onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }} />
           <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
         </div>
-        <nav aria-label="Editor actions" className="grid h-11 grid-cols-4 items-center gap-1 border-t border-border/60">
+        <nav aria-label="Editor actions" className="grid h-[5.5rem] grid-cols-4 grid-rows-2 items-center gap-1 border-t border-border/60">
           <IconBtn label="Add" onClick={() => openBottom("text")}><Plus /></IconBtn>
           <IconBtn label="Save" onClick={() => setExportOpen((v) => !v)}><Save /></IconBtn>
           <IconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></IconBtn>
@@ -680,63 +702,15 @@ export function Editor({ id }: { id: string }) {
 
         {/* side panel */}
         <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[30vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}>
-          <div className="flex min-w-0 items-center gap-1 border-b border-border p-2">
-            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overscroll-contain whitespace-nowrap">
-            {contextualTabs.map((t) => (
-              <Button variant="ghost" size="sm" key={t} onClick={() => setTab(t)} className={`shrink-0 px-2 ${tab === t ? "bg-muted text-foreground" : "text-muted-foreground"}`}>
-                <span className="inline-flex items-center gap-1 [&_svg]:h-4 [&_svg]:w-4">{tabIcon[t]}{tabLabel[t]}</span>
-              </Button>
-            ))}
+          <div className="flex min-h-0 shrink-0 items-center border-b border-border">
+            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-contain p-2">
+              {toolRows[bottomMode].map((tool) => <button key={tool} title={tool} aria-label={tool} onClick={() => runTool(tool)} className={`flex w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[10px] ${selectedTool === tool ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted"}`}><span className="[&_svg]:h-5 [&_svg]:w-5">{toolIcon(tool)}</span><span className="truncate">{tool}</span></button>)}
             </div>
-            <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
+            <button className="mr-2 rounded p-1" aria-label="Close tools" onClick={() => { setPanelOpen(false); setSelectedTool(null); }}><X className="h-4 w-4" /></button>
           </div>
-          <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
-            {!o && bottomMode === "text" && <Grid><Tile onClick={addText}><Type /><span className="text-[10px]">Add text</span></Tile><Tile onClick={() => addTextPreset("heading")}><Bold /><span className="text-[10px]">Heading</span></Tile><Tile onClick={() => addTextPreset("subheading")}><Italic /><span className="text-[10px]">Subheading</span></Tile><Tile onClick={() => addTextPreset("body")}><Type /><span className="text-[10px]">Body text</span></Tile><Tile onClick={addDate}><CalendarDays /><span className="text-[10px]">Current date</span></Tile><Tile onClick={() => setAdding(true)}><Smile /><span className="text-[10px]">Sticker</span></Tile></Grid>}
-            {!o && bottomMode === "elements" && <Grid><Tile onClick={() => openTab("shapes")}><Shapes /><span className="text-[10px]">Shapes</span></Tile><Tile onClick={() => fileRef.current?.click()}><ImagePlus /><span className="text-[10px]">Import</span></Tile><Tile onClick={() => addShape("line")}><Pencil /><span className="text-[10px]">Draw</span></Tile><Tile onClick={() => addShape("arrow")}><ArrowRight /><span className="text-[10px]">Arrow</span></Tile><Tile onClick={() => addShape("line")}><Scan /><span className="text-[10px]">Bezier</span></Tile><Tile onClick={() => openTab("stickers")}><Smile /><span className="text-[10px]">Stickers</span></Tile></Grid>}
-            {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} onPickColor={pickColorFromCanvas} actions={{ dup, del, order, toggleLock, group: groupSelected, ungroup: ungroupSelected }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
-            {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(mode, color, tol) => { void eraseImageBackground(mode, color, tol); }} eraseBusy={eraseBusy} onPickColor={pickColorFromCanvas} onMaskImage={maskImage} />}
-            {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
-            {ready && tab === "layers" && (
-              <div className="space-y-1">
-                {objects.length === 0 && <p className="text-sm text-muted-foreground">No layers yet. Add text, images or shapes.</p>}
-                {objects.map((x, i) => (
-                  <div key={i} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-sm ${o === x ? "border-primary bg-primary/10" : "border-border"}`}>
-                    <button className="min-w-0 flex-1 truncate text-left" onClick={() => { if (!x.lockedLayer && x.visible) { fc.current.setActiveObject(x); fc.current.requestRenderAll(); force(); } }}>
-                      {x.name || x.type}{x.text ? `: ${x.text.slice(0, 18)}` : ""}
-                    </button>
-                    <IconBtn label={x.visible ? "Hide" : "Show"} onClick={() => toggleVis(x)}>{x.visible ? <Eye /> : <EyeOff />}</IconBtn>
-                    <IconBtn label={x.lockedLayer ? "Unlock" : "Lock"} onClick={() => toggleLock(x)}>{x.lockedLayer ? <Lock /> : <Unlock />}</IconBtn>
-                  </div>
-                ))}
-                {o && (
-                  <div className="grid grid-cols-4 gap-1 pt-3">
-                    <IconBtn label="Bring to front" onClick={() => order("top")}><ChevronsUp /></IconBtn>
-                    <IconBtn label="Bring forward" onClick={() => order("up")}><ArrowUp /></IconBtn>
-                    <IconBtn label="Send backward" onClick={() => order("down")}><ArrowDown /></IconBtn>
-                    <IconBtn label="Send to back" onClick={() => order("bottom")}><ChevronsDown /></IconBtn>
-                  </div>
-                )}
-              </div>
-            )}
-            {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} />}
-            {ready && tab === "shapes" && (
-              <Grid>
-                {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => (
-                  <Tile key={k} onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>
-                ))}
-              </Grid>
-            )}
-            {ready && tab === "stickers" && (
-              <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid>
-            )}
-            {ready && tab === "icons" && (
-              <Grid>{Object.keys(ICONS).map((n) => (
-                <Tile key={n} onClick={() => addIcon(n)}>
-                  <svg viewBox="0 0 24 24" className="h-7 w-7 fill-current"><path d={ICONS[n]} /></svg>
-                  <span className="text-[10px]">{n}</span>
-                </Tile>
-              ))}</Grid>
-            )}
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {selectedTool && ready && fab.current && (selectedTool === "Shapes" ? <Grid>{["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => <Tile key={k} onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>)}</Grid> : selectedTool === "Stickers" ? <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid> : bottomMode === "background" && ["Color", "Transparent", "Image size", "Image", "From gallery", "From camera"].includes(selectedTool) ? <CanvasPanel c={fc.current} f={fab.current} proj={proj.current!} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} /> : <EditorToolDetails tool={bottomMode === "filters" ? `filter:${selectedTool === "Noise" ? "grain" : selectedTool === "Rotate" ? "rotation" : selectedTool.toLowerCase()}` : selectedTool} o={o} f={fab.current} c={fc.current} width={W()} height={H()} commit={commit} erase={(mode, color, tolerance) => { void eraseImageBackground(mode, color, tolerance); }} mask={maskImage} />)}
+            {!selectedTool && <p className="text-center text-sm text-muted-foreground">Choose a tool above. The tool details stay here while you scroll vertically.</p>}
           </div>
         </aside>
 
