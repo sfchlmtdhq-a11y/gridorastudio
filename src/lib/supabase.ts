@@ -1,24 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
-
-const supabaseUrl = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
-const supabaseKey = import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] as string | undefined;
-
-if (!supabaseUrl || !supabaseKey) {
-  console.warn("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
-}
-
-const sessionStorageAdapter = typeof window === "undefined" ? undefined : {
-  getItem: (key: string) => window.sessionStorage.getItem(key) ?? window.localStorage.getItem(key),
-  setItem: (key: string, value: string) => {
-    const remember = window.localStorage.getItem("gridora-remember-me") !== "false";
-    const target = remember ? window.localStorage : window.sessionStorage;
-    target.setItem(key, value);
-    (remember ? window.sessionStorage : window.localStorage).removeItem(key);
-  },
-  removeItem: (key: string) => { window.localStorage.removeItem(key); window.sessionStorage.removeItem(key); },
-};
-
-export const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey, { auth: { persistSession: true, storage: sessionStorageAdapter } }) : null;
+import { supabase } from "@/integrations/supabase/client";
+export { supabase };
 export const STORAGE_BUCKET = "design-assets";
 
 export function requireSupabase() {
@@ -46,5 +27,5 @@ export async function uploadDesignAsset(file: File, projectId?: string) {
     cacheControl: "31536000",
   });
   if (error) throw error;
-  return client.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl;
+  return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error("Could not read uploaded image")); reader.readAsDataURL(file); });
 }
