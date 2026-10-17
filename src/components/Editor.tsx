@@ -12,7 +12,14 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   Type,
   ImagePlus,
+  Camera,
   Shapes,
+  Square,
+  Eraser,
+  Sun,
+  Contrast,
+  Palette,
+  Droplets,
   Smile,
   Star,
   Layers,
@@ -53,6 +60,7 @@ import {
   Pencil,
   Sparkles,
   Send,
+  Share2,
   Group as GroupIcon,
   Ungroup,
   Frame,
@@ -238,7 +246,9 @@ export function Editor({ id }: { id: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const panelContentRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraFileRef = useRef<HTMLInputElement>(null);
   const backgroundFileRef = useRef<HTMLInputElement>(null);
+  const backgroundCameraFileRef = useRef<HTMLInputElement>(null);
   const vectorFileRef = useRef<HTMLInputElement>(null);
   const vectorActionsRef = useRef<{ finish: (closed?: boolean) => void; undo: () => void } | null>(
     null,
@@ -313,6 +323,8 @@ export function Editor({ id }: { id: string }) {
   );
   const [aiProposal, setAiProposal] = useState<AiProposal | null>(null);
   const aiPanelRef = useRef<HTMLElement | null>(null);
+  const [mobileCategory, setMobileCategory] = useState<string | null>(null);
+  const [topMenu, setTopMenu] = useState<"add" | "options" | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const askAssistant = useServerFn(askGeminiDesignAssistant);
 
@@ -522,6 +534,7 @@ export function Editor({ id }: { id: string }) {
   // init
   useEffect(() => {
     let disposed = false;
+    const currentTimers = timers.current;
     (async () => {
       const p = await getProject(id);
       if (!p) {
@@ -565,13 +578,26 @@ export function Editor({ id }: { id: string }) {
         const selected = c.getActiveObject();
         if (selected?.type === "image")
           setTab((current) => (current === "fill" ? "position" : current));
+        if (window.matchMedia("(max-width: 767px)").matches && selected) {
+          const selectedText = ["textbox", "i-text", "text"].includes(selected.type ?? "");
+          setMobileCategory(selectedText ? "text" : "elements");
+          setTab(selectedText ? "textTools" : "props");
+          setPanelOpen(true);
+        }
         setAlignmentGuides([]);
         setDistanceMarkers([]);
         force();
       };
+      const onSelectionCleared = () => {
+        if (window.matchMedia("(max-width: 767px)").matches) {
+          setMobileCategory(null);
+          setPanelOpen(false);
+        }
+        force();
+      };
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
-      c.on("selection:cleared", () => force());
+      c.on("selection:cleared", onSelectionCleared);
       c.on("object:moving", ({ target }: { target?: Obj }) => {
         if (!target) return;
         target.setCoords();
@@ -676,7 +702,7 @@ export function Editor({ id }: { id: string }) {
     })();
     return () => {
       disposed = true;
-      clearTimeout(timers.current.save);
+      clearTimeout(currentTimers.save);
       if (fc.current) {
         void persist();
         fc.current.dispose();
@@ -2459,6 +2485,181 @@ export function Editor({ id }: { id: string }) {
     { icon: <Grid2X2 />, label: "Canvas", active: tab === "bg", on: () => openTab("bg") },
   ];
   const tools = mainTools;
+  const mobileCategories = [
+    { id: "add", label: "Add", icon: <Type /> },
+    { id: "elements", label: "Elements", icon: <Square /> },
+    { id: "text", label: "Text", icon: <Type /> },
+    { id: "uploads", label: "Uploads", icon: <ImagePlus /> },
+    { id: "draw", label: "Draw", icon: <Paintbrush /> },
+    { id: "vector", label: "Bezier", icon: <Pencil /> },
+    { id: "background", label: "Background", icon: <Grid2X2 /> },
+    { id: "filters", label: "Filters", icon: <SlidersHorizontal /> },
+    { id: "position", label: "Position", icon: <Scan /> },
+    { id: "layers", label: "Layers", icon: <Layers /> },
+    { id: "effects", label: "Effects", icon: <Star /> },
+  ];
+  const activateMobileTool = (id: string, title: string) => {
+    if (id === "add-text") addText();
+    else if (id === "add-date") addDate();
+    else if (id === "sticker") openTab("stickers");
+    else if (id === "shape") openTab("shapes");
+    else if (id === "gallery") fileRef.current?.click();
+    else if (id === "camera") cameraFileRef.current?.click();
+    else if (id === "bg-gallery" || id === "bg-image") backgroundFileRef.current?.click();
+    else if (id === "bg-camera") backgroundCameraFileRef.current?.click();
+    else if (id === "draw") openTab("draw");
+    else if (id === "vector") openTab("vector");
+    else if (id === "arrow") addShape("arrow");
+    else if (id === "elements") openTab("add");
+    else if (id === "bg-color") openTab("bg");
+    else if (id === "bg-transparent") {
+      const canvas = fc.current;
+      if (canvas) {
+        canvas.backgroundImage = undefined;
+        canvas.backgroundColor = "";
+        commit();
+      }
+    } else if (id === "bg-size") openTab("bg");
+    else if (id === "filter-rotate") openTab("position");
+    else if (
+      [
+        "filter-noise",
+        "filter-brightness",
+        "filter-contrast",
+        "filter-hue",
+        "filter-saturation",
+      ].includes(id)
+    )
+      openTab("edit");
+    else if (id === "shape-erase") {
+      chooseDrawingTool("eraser");
+      openTab("draw");
+    } else if (id === "position") openTab("position");
+    else if (id === "layers") openTab("layers");
+    else if (id === "effects") openTab("effects");
+    else if (id === "delete") del();
+    else if (id === "copy") void copyObject();
+    else if (id === "front") order("top");
+    else if (id === "back") order("bottom");
+    else if (id === "text-edit") openTab("textTools");
+    else if (id === "text-color") openTab("fill");
+    else if (id === "text-mask") openTab("textTools");
+    else if (id === "text-stroke") openTab("stroke");
+    else if (id === "text-effects") openTab("effects");
+    else if (id === "shape-crop") openTab("props");
+    else if (id === "shape-mask") openTab("frames");
+    else if (id === "shape-color") openTab("fill");
+    else if (id === "shape-stroke") openTab("stroke");
+    else if (id === "shape-effects") openTab("effects");
+    else if (id === "shape-perspective") openTab("position");
+    else if (id === "shape-filter" || id === "shape-erase-color") openTab("effects");
+    else {
+      void title;
+      openTab(isTextSelected ? "textTools" : "props");
+    }
+    if (id === "add-text" || id === "add-date") {
+      setMobileCategory("text");
+      setTab("textTools");
+    } else if (id === "arrow") {
+      setMobileCategory("elements");
+      setTab("props");
+    } else setMobileCategory(null);
+  };
+  const generalMobileTools: Record<string, { id: string; title: string; icon: ReactNode }[]> = {
+    add: [
+      { id: "add-text", title: "Add text", icon: <Type /> },
+      { id: "add-date", title: "Current date", icon: <CalendarDays /> },
+      { id: "sticker", title: "Stickers", icon: <Smile /> },
+      { id: "shape", title: "Shapes", icon: <Shapes /> },
+      { id: "gallery", title: "From gallery", icon: <ImagePlus /> },
+      { id: "draw", title: "Draw", icon: <Paintbrush /> },
+    ],
+    elements: [
+      { id: "sticker", title: "Stickers", icon: <Smile /> },
+      { id: "gallery", title: "Import", icon: <ImagePlus /> },
+      { id: "draw", title: "Draw", icon: <Paintbrush /> },
+      { id: "shape", title: "Shapes", icon: <Shapes /> },
+      { id: "vector", title: "Bezier", icon: <Pencil /> },
+      { id: "arrow", title: "Arrow", icon: <ArrowUp /> },
+    ],
+    text: [
+      { id: "add-text", title: "Add text", icon: <Type /> },
+      { id: "text-edit", title: "Edit / font / style / curve", icon: <Pencil /> },
+      { id: "text-color", title: "Colour / background", icon: <PaintBucket /> },
+      { id: "position", title: "Position / align / spacing", icon: <Scan /> },
+      { id: "text-mask", title: "Mask", icon: <Frame /> },
+      { id: "text-stroke", title: "Stroke", icon: <SlidersHorizontal /> },
+      { id: "text-effects", title: "Shadow / reflection", icon: <Star /> },
+    ],
+    uploads: [
+      { id: "gallery", title: "From gallery", icon: <ImagePlus /> },
+      { id: "camera", title: "From camera", icon: <Camera /> },
+    ],
+    draw: [
+      { id: "draw", title: "Drawing tools", icon: <Paintbrush /> },
+      { id: "vector", title: "Bezier pen", icon: <Pencil /> },
+    ],
+    vector: [
+      { id: "vector", title: "Bezier pen", icon: <Pencil /> },
+      { id: "shape", title: "Shapes", icon: <Shapes /> },
+      { id: "arrow", title: "Arrow", icon: <ArrowUp /> },
+    ],
+    background: [
+      { id: "bg-color", title: "Color", icon: <PaintBucket /> },
+      { id: "bg-transparent", title: "Transparent", icon: <EyeOff /> },
+      { id: "bg-size", title: "Image size", icon: <Scan /> },
+      { id: "bg-image", title: "Image", icon: <ImagePlus /> },
+      { id: "bg-gallery", title: "From gallery", icon: <ImagePlus /> },
+      { id: "bg-camera", title: "From camera", icon: <Camera /> },
+    ],
+    filters: [
+      { id: "filter-rotate", title: "Rotate", icon: <RotateCcw /> },
+      { id: "filter-noise", title: "Noise", icon: <Sparkles /> },
+      { id: "filter-brightness", title: "Brightness", icon: <Sun /> },
+      { id: "filter-contrast", title: "Contrast", icon: <Contrast /> },
+      { id: "filter-hue", title: "Hue", icon: <Palette /> },
+      { id: "filter-saturation", title: "Saturation", icon: <Droplets /> },
+    ],
+    position: [
+      { id: "position", title: "Position / relative size", icon: <Scan /> },
+      { id: "front", title: "To front", icon: <ChevronsUp /> },
+      { id: "back", title: "To back", icon: <ChevronsDown /> },
+    ],
+    layers: [{ id: "layers", title: "Layer list", icon: <Layers /> }],
+    effects: [{ id: "effects", title: "Shadow and effects", icon: <Star /> }],
+  };
+  const contextualMobileTools = isTextSelected
+    ? [
+        { id: "text-edit", title: "Edit", icon: <Pencil /> },
+        { id: "delete", title: "Delete", icon: <Trash2 /> },
+        { id: "copy", title: "Copy", icon: <Copy /> },
+        { id: "front", title: "To front", icon: <ChevronsUp /> },
+        { id: "back", title: "To back", icon: <ChevronsDown /> },
+        { id: "position", title: "Position / relative size / rotate / align", icon: <Scan /> },
+        { id: "text-color", title: "Colour / opacity / background", icon: <PaintBucket /> },
+        { id: "text-edit", title: "Font / style / curve / spacing", icon: <Type /> },
+        { id: "text-mask", title: "Text background", icon: <Frame /> },
+        { id: "text-stroke", title: "Stroke", icon: <SlidersHorizontal /> },
+        { id: "text-effects", title: "Shadow / 3D / reflection", icon: <Star /> },
+      ]
+    : o
+      ? [
+          { id: "delete", title: "Delete", icon: <Trash2 /> },
+          { id: "shape-crop", title: "Crop", icon: <Frame /> },
+          { id: "copy", title: "Copy", icon: <Copy /> },
+          { id: "front", title: "To front", icon: <ChevronsUp /> },
+          { id: "back", title: "To back", icon: <ChevronsDown /> },
+          { id: "position", title: "Position / relative size / rotate", icon: <Scan /> },
+          { id: "shape-color", title: "Color / opacity", icon: <PaintBucket /> },
+          { id: "shape-filter", title: "Color filters", icon: <Sparkles /> },
+          { id: "shape-stroke", title: "Stroke", icon: <SlidersHorizontal /> },
+          { id: "shape-erase", title: "Eraser", icon: <Eraser /> },
+          { id: "shape-mask", title: "Mask / frame", icon: <Frame /> },
+          { id: "shape-erase-color", title: "Erase color", icon: <Droplets /> },
+          { id: "shape-perspective", title: "Perspective / tilt", icon: <Scan /> },
+          { id: "shape-effects", title: "Shadow / effects", icon: <Star /> },
+        ]
+      : (generalMobileTools[mobileCategory ?? ""] ?? []);
   const requestHome = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     setSaveHomeOpen(true);
@@ -2473,64 +2674,116 @@ export function Editor({ id }: { id: string }) {
     setSaveHomeOpen(false);
     nav({ to: "/" });
   };
+  const mobileToolItems =
+    (mobileCategory === "text" && isTextSelected) ||
+    (mobileCategory === "elements" && !!o && !isTextSelected)
+      ? contextualMobileTools
+      : (generalMobileTools[mobileCategory ?? ""] ?? []);
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden">
-      {/* top bar */}
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-card px-2 sm:px-4">
-        <Logo compact onClick={requestHome} />
-        <input
-          className="min-w-0 max-w-[40vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs"
-          defaultValue={proj.current?.name}
-          key={ready ? "r" : "n"}
-          onBlur={(e) => {
-            if (proj.current) {
-              proj.current.name = e.target.value || "Untitled design";
-              persist();
-            }
-          }}
-        />
-        <button
-          title="Canvas settings"
-          aria-label="Canvas settings"
-          onClick={() => openTab("bg")}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+      <header className="z-40 shrink-0 border-b border-border bg-card shadow-sm">
+        <div className="flex h-11 items-center gap-2 px-2 sm:px-4">
+          <Logo compact onClick={requestHome} />
+          <input
+            className="min-w-0 max-w-[42vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs"
+            defaultValue={proj.current?.name}
+            key={ready ? "r" : "n"}
+            onBlur={(e) => {
+              if (proj.current) {
+                proj.current.name = e.target.value || "Untitled design";
+                persist();
+              }
+            }}
+          />
+          <span
+            role="status"
+            title={saved ? "All changes saved" : "Saving project changes"}
+            className="hidden whitespace-nowrap text-[10px] text-muted-foreground sm:inline"
+          >
+            {saved ? "Saved" : "Saving…"}
+          </span>
+          <button
+            title="AI Design Director"
+            aria-label="AI Design Director"
+            onClick={() => setAiOpen((value) => !value)}
+            className={`ml-auto rounded-lg p-2 ${aiOpen ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+          >
+            <Sparkles className="h-4 w-4" />
+          </button>
+        </div>
+        <nav
+          aria-label="Editor actions"
+          className="flex h-11 items-center gap-1 overflow-x-auto px-2 sm:px-4"
         >
-          <Grid2X2 className="h-4 w-4" />
-          <span className="hidden sm:inline">Canvas</span>
-        </button>
-        <button
-          title="AI design assistant"
-          aria-label="AI design assistant"
-          onClick={() => setAiOpen((v) => !v)}
-          className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${aiOpen ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
-        >
-          <Sparkles className="h-4 w-4" />
-          <span className="hidden sm:inline">Assistant</span>
-        </button>
-        <span
-          role="status"
-          title={saved ? "All changes saved" : "Saving project changes"}
-          className="hidden whitespace-nowrap text-xs text-muted-foreground sm:inline"
-        >
-          {saved ? "Saved" : "Saving…"}
-        </span>
-        <div className="ml-auto flex items-center gap-1">
-          <IconBtn label="Undo" disabled={h.i <= 0} onClick={undo}>
-            <Undo2 />
-          </IconBtn>
-          <IconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}>
-            <Redo2 />
-          </IconBtn>
-          <div className="relative">
-            <button
-              onClick={() => setExportOpen((v) => !v)}
-              className="ml-1 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+          <div className="relative shrink-0">
+            <IconBtn
+              label="Add"
+              active={topMenu === "add"}
+              onClick={() => setTopMenu(topMenu === "add" ? null : "add")}
             >
-              <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
-            </button>
+              <Plus />
+            </IconBtn>
+            {topMenu === "add" && (
+              <div className="absolute left-0 top-10 z-50 w-52 rounded-xl border border-border bg-popover p-1 shadow-xl">
+                {[
+                  { label: "Add text", action: addText },
+                  { label: "Current date", action: addDate },
+                  { label: "Stickers", action: () => openTab("stickers") },
+                  { label: "Shapes", action: () => openTab("shapes") },
+                  { label: "From gallery", action: () => fileRef.current?.click() },
+                  { label: "Draw", action: () => openTab("draw") },
+                ].map(({ label, action }) => (
+                  <button
+                    key={label}
+                    onClick={() => {
+                      action();
+                      setTopMenu(null);
+                    }}
+                    className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="relative shrink-0">
+            <IconBtn
+              label="Save / export"
+              active={exportOpen}
+              onClick={() => setExportOpen((value) => !value)}
+            >
+              <Download />
+            </IconBtn>
             {exportOpen && (
-              <div className="absolute right-0 top-11 z-50 max-h-[70vh] w-64 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-xl">
+              <div className="absolute left-0 top-10 z-50 max-h-[70vh] w-60 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-xl">
+                <button
+                  onClick={() => {
+                    void persist();
+                    setExportOpen(false);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Save as project
+                </button>
+                <button
+                  onClick={() => exportAs("png")}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Save as image
+                </button>
+                <button
+                  onClick={() => {
+                    if (typeof Reflect.get(navigator, "share") === "function") void shareDesign();
+                    else void exportAs("png");
+                    setExportOpen(false);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Save to gallery
+                </button>
+                <div className="my-1 border-t border-border" />
                 {(
                   [
                     ["png", "PNG"],
@@ -2538,22 +2791,21 @@ export function Editor({ id }: { id: string }) {
                     ["jpg", "JPG"],
                     ["pdf", "PDF"],
                   ] as const
-                ).map(([k, l]) => (
+                ).map(([kind, label]) => (
                   <button
-                    key={k}
-                    onClick={() => exportAs(k)}
+                    key={kind}
+                    onClick={() => exportAs(kind)}
                     className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
                   >
-                    {l}
+                    {label}
                   </button>
                 ))}
-                <div className="my-1 border-t border-border" />
                 <button
                   disabled={!o}
                   onClick={exportSelectedObject}
                   className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-40"
                 >
-                  Export selected object (PNG)
+                  Export selected object
                 </button>
                 <button
                   onClick={() => {
@@ -2562,34 +2814,7 @@ export function Editor({ id }: { id: string }) {
                   }}
                   className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
                 >
-                  Export all saved designs as multi-page PDF
-                </button>
-                <button
-                  onClick={() => {
-                    void copyPng(!!o);
-                    setExportOpen(false);
-                  }}
-                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
-                >
-                  Copy image
-                </button>
-                <button
-                  onClick={() => {
-                    void copyPng(false);
-                    setExportOpen(false);
-                  }}
-                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
-                >
-                  Copy as PNG
-                </button>
-                <button
-                  onClick={() => {
-                    void shareDesign();
-                    setExportOpen(false);
-                  }}
-                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
-                >
-                  Share design image
+                  Export saved designs as PDF
                 </button>
                 <button
                   onClick={() => {
@@ -2598,12 +2823,142 @@ export function Editor({ id }: { id: string }) {
                   }}
                   className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
                 >
-                  Export design as SVG
+                  Export SVG
                 </button>
               </div>
             )}
           </div>
-        </div>
+          <IconBtn label="Undo" disabled={h.i <= 0} onClick={undo}>
+            <Undo2 />
+          </IconBtn>
+          <IconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}>
+            <Redo2 />
+          </IconBtn>
+          <IconBtn
+            label="Share design image using available apps"
+            onClick={() => {
+              void shareDesign();
+            }}
+          >
+            <Share2 />
+          </IconBtn>
+          <IconBtn label="Zoom to 100%" onClick={() => applyZoom(1)}>
+            <span className="text-[10px] font-bold">100%</span>
+          </IconBtn>
+          <IconBtn
+            label="Toggle 3 × 3 guides"
+            active={guides.length === 6}
+            onClick={() =>
+              setGuides(
+                guides.length === 6
+                  ? []
+                  : [
+                      { axis: "x", value: W() / 4 },
+                      { axis: "x", value: W() / 2 },
+                      { axis: "x", value: (W() * 3) / 4 },
+                      { axis: "y", value: H() / 4 },
+                      { axis: "y", value: H() / 2 },
+                      { axis: "y", value: (H() * 3) / 4 },
+                    ],
+              )
+            }
+          >
+            <Grid3X3 />
+          </IconBtn>
+          <div className="relative shrink-0">
+            <IconBtn
+              label="Options"
+              active={topMenu === "options"}
+              onClick={() => setTopMenu(topMenu === "options" ? null : "options")}
+            >
+              <SlidersHorizontal />
+            </IconBtn>
+            {topMenu === "options" && (
+              <div className="absolute right-0 top-10 z-50 w-56 rounded-xl border border-border bg-popover p-1 shadow-xl">
+                <button
+                  onClick={() => {
+                    fileRef.current?.click();
+                    setTopMenu(null);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Use image from gallery
+                </button>
+                <button
+                  onClick={() => {
+                    cameraFileRef.current?.click();
+                    setTopMenu(null);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Use image from camera
+                </button>
+                <button
+                  onClick={() => {
+                    openTab("bg");
+                    setTopMenu(null);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Image size
+                </button>
+                <button
+                  onClick={() => {
+                    if (document.fullscreenElement) void document.exitFullscreen?.();
+                    else void document.documentElement.requestFullscreen?.();
+                    setTopMenu(null);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Fullscreen
+                </button>
+                <button
+                  onClick={() => {
+                    window.open("https://help.manus.im", "_blank", "noopener,noreferrer");
+                    setTopMenu(null);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Contact us
+                </button>
+                <button
+                  onClick={() => {
+                    window.open(
+                      "https://www.youtube.com/results?search_query=graphic+design+editor+tutorials",
+                      "_blank",
+                      "noopener,noreferrer",
+                    );
+                    setTopMenu(null);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Tutorials
+                </button>
+                <button
+                  onClick={() => {
+                    alert("Gridora Studio — canvas design editor");
+                    setTopMenu(null);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  About
+                </button>
+                <button
+                  onClick={() => {
+                    setSaveHomeOpen(true);
+                    setTopMenu(null);
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm text-destructive hover:bg-muted"
+                >
+                  Exit
+                </button>
+              </div>
+            )}
+          </div>
+          <IconBtn label="Layers" active={tab === "layers"} onClick={() => openTab("layers")}>
+            <Layers />
+          </IconBtn>
+        </nav>
       </header>
 
       {aiProposal?.status === "preview" && (
@@ -2616,7 +2971,7 @@ export function Editor({ id }: { id: string }) {
           aria-label="AI Design Director"
           aria-modal={aiProposal?.status === "preview"}
           tabIndex={-1}
-          className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"
+          className={`fixed inset-x-2 ${mobileCategory ? "bottom-[8.5rem]" : "bottom-20"} z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-24 md:w-96`}
         >
           <div className="flex items-center gap-2 border-b border-border p-3">
             <Sparkles className="h-4 w-4 text-primary" />
@@ -2787,7 +3142,7 @@ export function Editor({ id }: { id: string }) {
                 });
               } else setContextMenu(null);
             }}
-            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? (panelExpanded ? "bottom-[38dvh] md:bottom-0 md:left-[320px]" : "bottom-[26dvh] md:bottom-0 md:left-[320px]") : "bottom-36 md:bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? (panelExpanded ? "bottom-[50dvh] md:bottom-0 md:left-[320px]" : "bottom-[34dvh] md:bottom-0 md:left-[320px]") : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
           >
             <div
               className="flex min-h-full min-w-full items-center justify-center p-6"
@@ -3147,7 +3502,7 @@ export function Editor({ id }: { id: string }) {
         <aside
           id="mobile-editor-panel"
           aria-label="Editing tools"
-          className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-36 z-40 ${panelExpanded ? "h-[38dvh]" : "h-[26dvh]"} max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur transition-[height] duration-200 md:inset-x-auto md:bottom-0 md:left-20 md:top-14 md:h-auto md:w-[320px] md:rounded-none md:rounded-r-xl md:border-b-0 md:border-l md:border-t-0 md:shadow-xl`}
+          className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${mobileCategory ? "bottom-28" : "bottom-14"} z-40 ${panelExpanded ? "h-[50dvh]" : "h-[34dvh]"} max-h-[52dvh] flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur transition-[height] duration-200 md:inset-x-auto md:bottom-0 md:left-20 md:top-[5.5rem] md:h-auto md:max-h-none md:w-[320px] md:rounded-none md:rounded-r-xl md:border-b-0 md:border-l md:border-t-0 md:shadow-xl`}
         >
           <div className="flex min-w-0 shrink-0 items-center gap-1 border-b border-border p-2">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
@@ -3700,25 +4055,45 @@ export function Editor({ id }: { id: string }) {
           </div>
         </aside>
 
-        {/* mobile category navigation */}
-        <div className="shrink-0 border-t border-border bg-card md:hidden">
+        <div className="z-40 shrink-0 border-t border-border bg-card md:hidden">
+          {mobileCategory && (
+            <nav
+              aria-label={`${mobileCategories.find((category) => category.id === mobileCategory)?.label ?? "Selected"} tools`}
+              className="flex h-14 items-center gap-1 overflow-x-auto overscroll-x-contain border-b border-border px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              {mobileToolItems.map((item, index) => (
+                <button
+                  key={`${item.id}-${index}`}
+                  type="button"
+                  title={item.title}
+                  aria-label={item.title}
+                  onClick={() => activateMobileTool(item.id, item.title)}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-primary/10 active:text-primary [&_svg]:h-5 [&_svg]:w-5"
+                >
+                  {item.icon}
+                </button>
+              ))}
+            </nav>
+          )}
           <nav
             aria-label="Design categories"
-            className="grid h-44 grid-cols-4 grid-rows-4 gap-1 p-1"
+            className="flex h-14 items-center gap-1 overflow-x-auto overscroll-x-contain px-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
-            {tools.map((t) => (
-              <Button
-                variant="ghost"
-                disabled={!ready && !["Projects", "AI Tools"].includes(t.label)}
-                key={t.label}
-                title={t.label}
-                aria-pressed={t.active}
-                onClick={t.on}
-                className={`h-full min-h-10 min-w-0 w-full flex-col gap-0.5 px-1 text-[9px] leading-tight [&_svg]:size-5 ${t.active ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}
+            {mobileCategories.map((category) => (
+              <button
+                key={category.id}
+                type="button"
+                title={category.label}
+                aria-label={category.label}
+                aria-pressed={mobileCategory === category.id}
+                disabled={!ready}
+                onClick={() =>
+                  setMobileCategory((current) => (current === category.id ? null : category.id))
+                }
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors disabled:opacity-40 [&_svg]:h-5 [&_svg]:w-5 ${mobileCategory === category.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"}`}
               >
-                {t.icon}
-                <span className="max-w-full text-center">{t.label}</span>
-              </Button>
+                {category.icon}
+              </button>
             ))}
           </nav>
         </div>
@@ -3881,9 +4256,31 @@ export function Editor({ id }: { id: string }) {
         }}
       />
       <input
+        ref={cameraFileRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          onFile(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+      <input
         ref={backgroundFileRef}
         type="file"
         accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          onBackgroundFile(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={backgroundCameraFileRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
         className="hidden"
         onChange={(e) => {
           onBackgroundFile(e.target.files?.[0]);
@@ -5362,6 +5759,22 @@ function ContextualTools({
           max={180}
           onChange={(v) => set({ angle: v })}
         />
+        <Section title="Perspective & tilt (2D)">
+          <Slider
+            label="Horizontal skew"
+            value={o.skewX ?? 0}
+            min={-60}
+            max={60}
+            onChange={(v) => set({ skewX: v })}
+          />
+          <Slider
+            label="Vertical skew"
+            value={o.skewY ?? 0}
+            min={-60}
+            max={60}
+            onChange={(v) => set({ skewY: v })}
+          />
+        </Section>
         <Slider
           label="Layer transparency (%)"
           value={(o.opacity ?? 1) * 100}
@@ -6075,6 +6488,7 @@ function DesignEdit({ c, commit }: { c: Obj; commit: () => void }) {
         max={100}
         onChange={(v) => set("brightness", v)}
       />
+      <Slider label="Hue" value={a.hue} min={-180} max={180} onChange={(v) => set("hue", v)} />
       <Slider
         label="Blur"
         value={a.blur}
