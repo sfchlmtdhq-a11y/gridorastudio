@@ -7,3 +7,5 @@
 - [ ] Redesign editor tabs for accessible mobile, tablet and desktop use.
 - [ ] Expand and repair the assistant with attachments, image creation/editing and richer canvas changes.
 - [ ] Test real AI requests and editing flows; report configuration blockers.
+- [ ] Build the requested fixed two-row top navigation and four-icon bottom navigation with scrolling contextual tools.
+- [ ] Wire text, object, canvas, filters, drawing, guides, save, share and options controls.

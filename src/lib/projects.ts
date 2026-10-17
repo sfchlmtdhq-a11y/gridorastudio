@@ -25,12 +25,13 @@ type ProjectRow = {
   updated_at: string;
 };
 
-function publicAssetUrl(path: string | null) {
-  if (!path) return undefined;
-  return requireSupabase().storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl;
+async function privateAssetUrl(path: string) {
+  const { data, error } = await requireSupabase().storage.from(STORAGE_BUCKET).createSignedUrl(path, 3600);
+  if (error) throw error;
+  return data.signedUrl;
 }
 
-function fromRow(row: ProjectRow): Project {
+async function fromRow(row: ProjectRow): Promise<Project> {
   const project: Project = {
     id: row.id,
     name: row.name,
@@ -43,7 +44,7 @@ function fromRow(row: ProjectRow): Project {
   if (row.canvas_json !== null) project.json = row.canvas_json;
   if (row.thumbnail_path) {
     project.thumbPath = row.thumbnail_path;
-    project.thumb = publicAssetUrl(row.thumbnail_path)!;
+    project.thumb = await privateAssetUrl(row.thumbnail_path);
   }
   return project;
 }
@@ -57,7 +58,7 @@ export async function listProjects(): Promise<Project[]> {
     .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
   if (error) throw error;
-  return (data as ProjectRow[]).map(fromRow);
+  return Promise.all((data as ProjectRow[]).map(fromRow));
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {

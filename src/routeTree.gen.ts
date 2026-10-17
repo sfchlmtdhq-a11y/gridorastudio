@@ -10,11 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiDesignImageRouteImport } from './routes/api/design-image'
 import { Route as EditorIdRouteImport } from './routes/editor.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDesignImageRoute = ApiDesignImageRouteImport.update({
+  id: '/api/design-image',
+  path: '/api/design-image',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EditorIdRoute = EditorIdRouteImport.update({
@@ -25,27 +31,31 @@ const EditorIdRoute = EditorIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/design-image': typeof ApiDesignImageRoute
   '/editor/$id': typeof EditorIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/design-image': typeof ApiDesignImageRoute
   '/editor/$id': typeof EditorIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/design-image': typeof ApiDesignImageRoute
   '/editor/$id': typeof EditorIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/editor/$id'
+  fullPaths: '/' | '/api/design-image' | '/editor/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/editor/$id'
-  id: '__root__' | '/' | '/editor/$id'
+  to: '/' | '/api/design-image' | '/editor/$id'
+  id: '__root__' | '/' | '/api/design-image' | '/editor/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiDesignImageRoute: typeof ApiDesignImageRoute
   EditorIdRoute: typeof EditorIdRoute
 }
 
@@ -56,6 +66,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/design-image': {
+      id: '/api/design-image'
+      path: '/api/design-image'
+      fullPath: '/api/design-image'
+      preLoaderRoute: typeof ApiDesignImageRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/editor/$id': {
@@ -70,6 +87,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiDesignImageRoute: ApiDesignImageRoute,
   EditorIdRoute: EditorIdRoute,
 }
 export const routeTree = rootRouteImport
