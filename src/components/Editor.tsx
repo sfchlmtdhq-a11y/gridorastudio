@@ -3,8 +3,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
   Type, ImagePlus, Shapes, Smile, Star, Layers, PaintBucket, Undo2, Redo2, ZoomIn, ZoomOut, Maximize,
-  Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Grid2X2,
-  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil, Sparkles, Send,
+  Hand, Download, Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Eye, EyeOff, Lock, Unlock, Ungroup, Grid2X2,
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight, SlidersHorizontal, X, FlipHorizontal, FlipVertical, Plus, ArrowLeft, ArrowRight, CalendarDays, Scan, RotateCcw, Pencil, Sparkles, Send, Save, Share2, Settings2,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { getProject, saveProject, deleteProject, type Project } from "@/lib/projects";
@@ -74,6 +74,9 @@ export function Editor({ id }: { id: string }) {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiMessages, setAiMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [bottomMode, setBottomMode] = useState<"text" | "elements" | "background" | "filters">("text");
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const askAssistant = useServerFn(askGeminiDesignAssistant);
 
   const W = () => proj.current?.width ?? 1;
@@ -252,6 +255,14 @@ export function Editor({ id }: { id: string }) {
     add(new f.Textbox("Double-click to edit", { width: W() * 0.6, fontSize: Math.round(Math.min(W(), H()) / 12), fontFamily: "Manrope", fill: "#111111", textAlign: "center", name: "Text" }));
     setPanelOpen(true);
   };
+  const addTextPreset = (kind: "heading" | "subheading" | "body") => {
+    const f = fab.current;
+    if (!f) return;
+    const sizes = { heading: 56, subheading: 36, body: 24 };
+    const labels = { heading: "Heading", subheading: "Subheading", body: "Body text" };
+    add(new f.Textbox(labels[kind], { width: W() * 0.72, fontSize: sizes[kind], fontFamily: "Manrope", fontWeight: kind === "heading" ? "bold" : "normal", fill: "#111111", textAlign: "center", name: labels[kind] }));
+    setPanelOpen(true);
+  };
 
   const addShape = (kind: string) => {
     const f = fab.current;
@@ -265,6 +276,9 @@ export function Editor({ id }: { id: string }) {
     else if (kind === "ellipse") o = new f.Ellipse({ rx: s / 2, ry: s / 3, fill, name: "Ellipse" });
     else if (kind === "triangle") o = new f.Triangle({ width: s, height: s, fill, name: "Triangle" });
     else if (kind === "line") o = new f.Line([0, 0, s * 1.5, 0], { stroke: "#111111", strokeWidth: Math.max(4, s / 25), name: "Line" });
+    else if (kind === "arrow") o = new f.Path(`M 0 20 L ${s * 1.2} 20 M ${s * 1.2 - 28} 4 L ${s * 1.2} 20 L ${s * 1.2 - 28} 36`, { fill: "", stroke: "#111111", strokeWidth: Math.max(4, s / 25), name: "Arrow" });
+    else if (kind === "frame") o = new f.Rect({ width: s, height: s, fill: "rgba(0,0,0,0)", stroke: "#111111", strokeWidth: Math.max(4, s / 25), name: "Frame" });
+    else if (kind === "grid") { const lines = Array.from({ length: 5 }, (_, i) => new f.Line([0, (s * i) / 4, s, (s * i) / 4], { stroke: "#111111", strokeWidth: 2 })); o = new f.Group([...lines, ...Array.from({ length: 5 }, (_, i) => new f.Line([(s * i) / 4, 0, (s * i) / 4, s], { stroke: "#111111", strokeWidth: 2 }))], { name: "Grid" }); }
     else {
       const pts = [];
       const n = kind === "star" ? 10 : kind === "hexagon" ? 6 : 5;
@@ -292,6 +306,8 @@ export function Editor({ id }: { id: string }) {
     o.scaleToWidth(Math.min(W(), H()) * 0.2);
     add(o);
   };
+  const groupSelected = () => { const c = fc.current, selection = c?.getActiveObject(); if (!c || !selection || selection.type !== "activeSelection") return; selection.toGroup?.(); c.requestRenderAll(); commit(); };
+  const ungroupSelected = () => { const c = fc.current, group = c?.getActiveObject(); if (!c || !group || group.type !== "group") return; group.toActiveSelection?.(); c.requestRenderAll(); commit(); };
 
   const previewImage = (file: File | undefined, target: "element" | "background") => {
     if (!file) return;
@@ -552,7 +568,7 @@ export function Editor({ id }: { id: string }) {
   const isTextSelected = !!o && ["textbox", "i-text", "text"].includes(o.type);
   const isImageSelected = !!o && o.type === "image";
   const isElementSelected = !!o;
-  const contextualTabs: Tab[] = tab === "layers" ? ["layers"] : tab === "edit" ? ["edit"] : ["shapes", "stickers", "icons"].includes(tab) ? [tab] : isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isImageSelected ? ["props", "position", "stroke", "effects"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : ["bg", "layers", "edit"];
+  const contextualTabs: Tab[] = tab === "layers" ? ["layers"] : tab === "edit" ? ["edit"] : ["shapes", "stickers", "icons"].includes(tab) ? [tab] : isTextSelected ? ["props", "textTools", "position", "fill", "stroke", "effects"] : isImageSelected ? ["props", "position", "stroke", "effects"] : isElementSelected ? ["props", "position", "fill", "stroke", "effects"] : bottomMode === "background" ? ["bg"] : bottomMode === "filters" ? ["edit"] : bottomMode === "elements" ? ["shapes", "stickers", "icons"] : [];
   const tabLabel: Record<Tab, string> = { props: "Properties", textTools: "Text tools", position: "Position", fill: "Fill", stroke: "Stroke", effects: "Effects", layers: "Layers", shapes: "Shapes", stickers: "Stickers", icons: "Icons", bg: "Canvas", edit: "Edit" };
   const tabIcon: Record<Tab, ReactNode> = { props: <SlidersHorizontal />, textTools: <Type />, position: <Scan />, fill: <PaintBucket />, stroke: <SlidersHorizontal />, effects: <Star />, layers: <Layers />, shapes: <Shapes />, stickers: <Smile />, icons: <Star />, bg: <PaintBucket />, edit: <SlidersHorizontal /> };
   const selectionBounds = o?.getBoundingRect?.();
@@ -571,6 +587,9 @@ export function Editor({ id }: { id: string }) {
   const addTools: { icon: ReactNode; label: string; on: () => void }[] = [
     { icon: <ImagePlus />, label: "Images", on: () => fileRef.current?.click() },
     { icon: <Type />, label: "Text", on: addText },
+    { icon: <Bold />, label: "Heading", on: () => addTextPreset("heading") },
+    { icon: <Italic />, label: "Subheading", on: () => addTextPreset("subheading") },
+    { icon: <Type />, label: "Body text", on: () => addTextPreset("body") },
     { icon: <Shapes />, label: "Shapes", on: () => openTab("shapes") },
     { icon: <Star />, label: "Icons", on: () => openTab("icons") },
     { icon: <CalendarDays />, label: "Date", on: addDate },
@@ -586,51 +605,43 @@ export function Editor({ id }: { id: string }) {
   const requestHome = (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setSaveHomeOpen(true); };
   const saveProjectAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
   const exportAndHome = async (kind: "png" | "jpg" | "pdf") => { await exportAs(kind); setSaveHomeOpen(false); nav({ to: "/" }); };
+  const openBottom = (mode: "text" | "elements" | "background" | "filters") => { setBottomMode(mode); setPanelOpen(true); if (mode === "background") setTab("bg"); if (mode === "filters") setTab("edit"); if (mode === "elements") setTab("shapes"); };
+  const shareDesign = async () => { if (navigator.share) { await navigator.share({ title: proj.current?.name ?? "Gridora design", text: "A design made in Gridora Studio" }).catch(() => undefined); } else setExportOpen(true); };
+  const shareTo = (target: string) => { const url = encodeURIComponent(window.location.href); const text = encodeURIComponent(proj.current?.name ?? "My Gridora design"); const links: Record<string, string> = { Facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`, Twitter: `https://twitter.com/intent/tweet?text=${text}&url=${url}`, Google: `https://www.google.com/search?q=${text}`, Whatsapp: `https://wa.me/?text=${text}%20${url}`, Instagram: "https://www.instagram.com/" }; if (target === "Save to gallery") { void exportAs("png"); return; } window.open(links[target], "_blank", "noopener,noreferrer"); };
+  const topOptions = [
+    ["Use image from gallery", () => fileRef.current?.click()], ["Fullscreen", () => document.documentElement.requestFullscreen?.()],
+    ["Use image from camera", () => { fileRef.current?.setAttribute("capture", "environment"); fileRef.current?.click(); }], ["Image size", () => openBottom("background")],
+    ["Contact us", () => { window.location.href = "mailto:contact@sfchlimited.com"; }], ["Tutorials", () => { window.open("#tutorials", "_self"); }], ["About", () => { window.open("/", "_self"); }], ["Exit", () => setSaveHomeOpen(true)],
+  ] as const;
+  const bottomTools: { icon: ReactNode; label: string; mode: "text" | "elements" | "background" | "filters" }[] = [
+    { icon: <Type />, label: "Text", mode: "text" }, { icon: <Shapes />, label: "Elements", mode: "elements" }, { icon: <PaintBucket />, label: "Background", mode: "background" }, { icon: <Sparkles />, label: "Filters", mode: "filters" },
+  ];
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden">
-      {/* top bar */}
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-card px-2 sm:px-4">
-        <Logo compact onClick={requestHome} />
-        <input
-          className="min-w-0 max-w-[40vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs"
-          defaultValue={proj.current?.name}
-          key={ready ? "r" : "n"}
-          onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }}
-        />
-        <button title="Smart alignment" aria-label="Smart alignment" onClick={() => setSnapAlign((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${snapAlign ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Grid2X2 className="h-4 w-4" /> <span className="hidden sm:inline">Align</span></button>
-        <button title="AI design assistant" aria-label="AI design assistant" onClick={() => setAiOpen((v) => !v)} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${aiOpen ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}><Sparkles className="h-4 w-4" /><span className="hidden sm:inline">Assistant</span></button>
-        <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
-        <div className="ml-auto flex items-center gap-1">
-          <IconBtn label="Undo" disabled={h.i <= 0} onClick={undo}><Undo2 /></IconBtn>
-          <IconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></IconBtn>
-          <div className="relative">
-            <button onClick={() => setExportOpen((v) => !v)} className="ml-1 inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">
-              <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
-            </button>
-            {exportOpen && (
-              <div className="absolute right-0 top-11 z-50 w-52 rounded-xl border border-border bg-popover p-1 shadow-xl">
-                {([["png", "PNG"], ["tpng", "Transparent PNG"], ["jpg", "JPG"], ["pdf", "PDF"]] as const).map(([k, l]) => (
-                  <button key={k} onClick={() => exportAs(k)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">{l}</button>
-                ))}
-              </div>
-            )}
-          </div>
+      <header className="relative z-40 shrink-0 border-b border-border bg-card px-2 sm:px-4">
+        <div className="flex h-12 items-center gap-2">
+          <Logo compact onClick={requestHome} />
+          <input className="min-w-0 max-w-[35vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs" defaultValue={proj.current?.name} key={ready ? "r" : "n"} onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }} />
+          <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
         </div>
+        <nav aria-label="Editor actions" className="grid h-11 grid-cols-4 items-center gap-1 border-t border-border/60">
+          <IconBtn label="Add" onClick={() => openBottom("text")}><Plus /></IconBtn>
+          <IconBtn label="Save" onClick={() => setExportOpen((v) => !v)}><Save /></IconBtn>
+          <IconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></IconBtn>
+          <IconBtn label="Share" active={shareOpen} onClick={() => setShareOpen((v) => !v)}><Share2 /></IconBtn>
+          <IconBtn label="Zoom to 100%" onClick={() => applyZoom(1)}><Scan /></IconBtn>
+          <IconBtn label="Grid guides" active={snapAlign} onClick={() => setSnapAlign((v) => !v)}><Grid2X2 /></IconBtn>
+          <IconBtn label="Options" active={optionsOpen} onClick={() => setOptionsOpen((v) => !v)}><Settings2 /></IconBtn>
+          <IconBtn label="Layers" onClick={() => { setBottomMode("elements"); openTab("layers"); }}><Layers /></IconBtn>
+        </nav>
+        {optionsOpen && <div className="absolute right-2 top-[6.5rem] z-50 grid w-60 gap-1 rounded-xl border border-border bg-popover p-2 shadow-xl">{topOptions.map(([label, on]) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { on(); setOptionsOpen(false); }}>{label}</button>)}</div>}
+        {shareOpen && <div className="absolute right-2 top-[6.5rem] z-50 grid w-52 gap-1 rounded-xl border border-border bg-popover p-2 shadow-xl">{["Facebook", "Twitter", "Google", "Whatsapp", "Instagram", "Save to gallery"].map((label) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { shareTo(label); setShareOpen(false); }}>{label}</button>)}</div>}
+        {exportOpen && <div className="absolute right-2 top-[6.5rem] z-50 w-52 rounded-xl border border-border bg-popover p-1 shadow-xl">{([["png", "Save as image"], ["tpng", "Transparent PNG"], ["jpg", "JPG"], ["pdf", "PDF"], ["project", "Save as project"]] as const).map(([k, l]) => <button key={k} onClick={() => k === "project" ? void persist() : void exportAs(k)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">{l}</button>)}</div>}
       </header>
 
       {aiOpen && <section className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"><div className="flex items-center gap-2 border-b border-border p-3"><Sparkles className="h-4 w-4 text-primary" /><h2 className="font-semibold">Design assistant</h2><button className="ml-auto rounded p-1 hover:bg-muted" onClick={() => setAiOpen(false)} aria-label="Close assistant"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{aiMessages.length === 0 && <p className="text-xs text-muted-foreground">Ask me to add, edit, move, arrange, or style objects on your canvas.</p>}{aiMessages.map((message, i) => <div key={i} className={`rounded-lg p-2 text-sm ${message.role === "user" ? "ml-5 bg-primary/15" : "mr-5 bg-muted"}`}>{message.text}</div>)}{aiBusy && <p className="text-xs text-muted-foreground">Working on your design…</p>}</div><form className="flex gap-2 border-t border-border p-3" onSubmit={(e) => { e.preventDefault(); void runAssistant(); }}><input className="field min-w-0 flex-1" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Try: add a blue circle" disabled={aiBusy} /><button className="rounded-lg bg-primary p-2 text-primary-foreground disabled:opacity-50" disabled={aiBusy || !aiPrompt.trim()} aria-label="Send command"><Send className="h-4 w-4" /></button></form></section>}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {/* tool rail desktop */}
-        <nav className="hidden w-20 shrink-0 flex-col gap-1 border-r border-border bg-card p-2 md:flex">
-          {adding && <Button variant="outline" size="icon" className="mx-auto mb-2 rounded-full" title="Back to tools" aria-label="Back to tools" onClick={backTools}><ArrowLeft /></Button>}
-          {tools.map((t) => (
-            <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-16 flex-col gap-1 px-0 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
-              {t.icon}{t.label}
-            </Button>
-          ))}
-        </nav>
-
         {/* canvas area */}
         <div className="relative min-h-0 min-w-0 flex-1">
           <div
@@ -640,7 +651,7 @@ export function Editor({ id }: { id: string }) {
             onPointerMove={(e) => { const d = drag.current; if (d && wrapRef.current) { wrapRef.current.scrollLeft = d.sl - (e.clientX - d.x); wrapRef.current.scrollTop = d.st - (e.clientY - d.y); } }}
             onPointerUp={() => (drag.current = null)}
             onPointerLeave={() => (drag.current = null)}
-            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(24vh+4rem)] md:bottom-[22vh]" : "bottom-0"} overflow-auto ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(30vh+4rem)]" : "bottom-16"} overflow-hidden ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
           >
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
               <div className={`checker shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
@@ -668,7 +679,7 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 ${adding ? "bottom-28" : "bottom-16"} z-40 h-[24vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-0 md:left-20 md:right-0 md:h-[22vh] md:rounded-t-xl md:border-l-0 md:border-t md:shadow-2xl`}>
+        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[30vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}>
           <div className="flex min-w-0 items-center gap-1 border-b border-border p-2">
             <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overscroll-contain whitespace-nowrap">
             {contextualTabs.map((t) => (
@@ -680,7 +691,9 @@ export function Editor({ id }: { id: string }) {
             <button className="ml-auto rounded p-1 md:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="h-4 w-4" /></button>
           </div>
           <div className="min-h-0 flex-1 snap-x snap-mandatory overflow-x-scroll overflow-y-auto scroll-smooth p-4">
-            {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} onPickColor={pickColorFromCanvas} actions={{ dup, del, order, toggleLock }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
+            {!o && bottomMode === "text" && <Grid><Tile onClick={addText}><Type /><span className="text-[10px]">Add text</span></Tile><Tile onClick={() => addTextPreset("heading")}><Bold /><span className="text-[10px]">Heading</span></Tile><Tile onClick={() => addTextPreset("subheading")}><Italic /><span className="text-[10px]">Subheading</span></Tile><Tile onClick={() => addTextPreset("body")}><Type /><span className="text-[10px]">Body text</span></Tile><Tile onClick={addDate}><CalendarDays /><span className="text-[10px]">Current date</span></Tile><Tile onClick={() => setAdding(true)}><Smile /><span className="text-[10px]">Sticker</span></Tile></Grid>}
+            {!o && bottomMode === "elements" && <Grid><Tile onClick={() => openTab("shapes")}><Shapes /><span className="text-[10px]">Shapes</span></Tile><Tile onClick={() => fileRef.current?.click()}><ImagePlus /><span className="text-[10px]">Import</span></Tile><Tile onClick={() => addShape("line")}><Pencil /><span className="text-[10px]">Draw</span></Tile><Tile onClick={() => addShape("arrow")}><ArrowRight /><span className="text-[10px]">Arrow</span></Tile><Tile onClick={() => addShape("line")}><Scan /><span className="text-[10px]">Bezier</span></Tile><Tile onClick={() => openTab("stickers")}><Smile /><span className="text-[10px]">Stickers</span></Tile></Grid>}
+            {ready && fab.current && tab === "props" && (o ? <Properties o={o} f={fab.current} commit={commit} onPickColor={pickColorFromCanvas} actions={{ dup, del, order, toggleLock, group: groupSelected, ungroup: ungroupSelected }} /> : <p className="text-sm text-muted-foreground">Select an element on the canvas to edit it.</p>)}
             {ready && fab.current && o && ["textTools", "position", "fill", "stroke", "effects"].includes(tab) && <ContextualTools o={o} f={fab.current} mode={tab as EditMode} commit={commit} onEraseBackground={(mode, color, tol) => { void eraseImageBackground(mode, color, tol); }} eraseBusy={eraseBusy} onPickColor={pickColorFromCanvas} onMaskImage={maskImage} />}
             {ready && tab === "edit" && <DesignEdit c={fc.current} commit={commit} />}
             {ready && tab === "layers" && (
@@ -708,7 +721,7 @@ export function Editor({ id }: { id: string }) {
             {ready && fab.current && proj.current && tab === "bg" && <CanvasPanel c={fc.current} f={fab.current} proj={proj.current} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} />}
             {ready && tab === "shapes" && (
               <Grid>
-                {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line"].map((k) => (
+                {["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => (
                   <Tile key={k} onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>
                 ))}
               </Grid>
@@ -727,17 +740,9 @@ export function Editor({ id }: { id: string }) {
           </div>
         </aside>
 
-        {/* tool rail mobile */}
-        <div className="shrink-0 border-t border-border bg-card md:hidden">
-          {adding && <div className="flex h-12 items-center gap-3 px-4"><Button variant="outline" size="icon" className="h-8 w-8 rounded-full" aria-label="Back to tools" title="Back to tools" onClick={backTools}><ArrowLeft /></Button><span className="text-xs font-semibold text-primary">Add</span></div>}
-        <nav aria-label="Design tools" className="flex h-16 items-center justify-around gap-1 px-2">
-          {tools.map((t) => (
-            <Button variant="ghost" disabled={!ready} key={t.label} onClick={t.on} className={`h-14 min-w-0 flex-1 flex-col gap-1 px-1 text-[10px] [&_svg]:size-5 ${t.label === "Add" ? "text-primary" : "text-muted-foreground"}`}>
-              {t.icon}{t.label}
-            </Button>
-          ))}
+        <nav aria-label="Primary design tools" className="fixed inset-x-0 bottom-0 z-50 grid h-16 grid-cols-4 border-t border-border bg-card/95 px-2 shadow-2xl backdrop-blur">
+          {bottomTools.map((tool) => <button key={tool.label} disabled={!ready} title={tool.label} aria-label={tool.label} onClick={() => openBottom(tool.mode)} className={`flex items-center justify-center [&_svg]:h-6 [&_svg]:w-6 ${bottomMode === tool.mode ? "text-primary" : "text-muted-foreground"}`}>{tool.icon}</button>)}
         </nav>
-        </div>
       </div>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
       <input ref={backgroundFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onBackgroundFile(e.target.files?.[0]); e.target.value = ""; }} />
@@ -887,7 +892,7 @@ function ShapeProperties({ o, f, set, commit, onPickColor }: { o: Obj; f: Fab; s
   );
 }
 
-function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; onPickColor?: (() => Promise<string | null>) | undefined; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void } }) {
+function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { o: Obj; f: Fab; commit: () => void; onPickColor?: (() => Promise<string | null>) | undefined; mode?: "general" | "legacy"; actions: { dup: () => void; del: () => void; order: (k: "up" | "down" | "top" | "bottom") => void; toggleLock: (o: Obj) => void; group: () => void; ungroup: () => void } }) {
   const set = (p: Record<string, unknown>) => { o.set(p); o.setCoords(); commit(); };
   const isText = o instanceof f.IText || o instanceof f.Textbox || o instanceof f.FabricText;
   const isImg = o instanceof f.FabricImage;
@@ -908,6 +913,8 @@ function Properties({ o, f, commit, onPickColor, actions, mode = "general" }: { 
       <IconBtn label="Copy" onClick={actions.dup}><Copy /></IconBtn>
       <IconBtn label="Bring forward" onClick={() => actions.order("up")}><ArrowUp /></IconBtn>
       <IconBtn label="Send backward" onClick={() => actions.order("down")}><ArrowDown /></IconBtn>
+      <IconBtn label="Group selected" onClick={actions.group}><Layers /></IconBtn>
+      <IconBtn label="Ungroup selected" onClick={actions.ungroup}><Ungroup /></IconBtn>
       <IconBtn label="Lock" onClick={() => actions.toggleLock(o)}><Lock /></IconBtn>
       <IconBtn label="Delete" className="text-destructive" onClick={actions.del}><Trash2 /></IconBtn>
     </div>
@@ -1083,8 +1090,13 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onP
       <IconBtn label="Bold" active={o.fontWeight === "bold"} onClick={() => set({ fontWeight: o.fontWeight === "bold" ? "normal" : "bold" })}><Bold /></IconBtn>
       <IconBtn label="Italic" active={o.fontStyle === "italic"} onClick={() => set({ fontStyle: o.fontStyle === "italic" ? "normal" : "italic" })}><Italic /></IconBtn>
       <button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ underline: !o.underline })}>Underline</button>
+      <button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ linethrough: !o.linethrough })}>Strike</button>
+      <button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ text: String(o.text ?? "").startsWith("• ") ? String(o.text ?? "").slice(2) : `• ${o.text ?? ""}` })}>Bullets</button>
+      <button className="rounded-md border border-border px-2 py-1 text-xs" onClick={() => set({ text: String(o.text ?? "").startsWith("1. ") ? String(o.text ?? "").slice(3) : `1. ${o.text ?? ""}` })}>Numbered list</button>
       <IconBtn label="Align left" onClick={() => set({ textAlign: "left" })}><AlignLeft /></IconBtn><IconBtn label="Align center" onClick={() => set({ textAlign: "center" })}><AlignCenter /></IconBtn><IconBtn label="Align right" onClick={() => set({ textAlign: "right" })}><AlignRight /></IconBtn>
     </div>
+    <div className="grid grid-cols-2 gap-2"><button className="rounded-md border border-border px-2 py-1.5 text-xs" onClick={() => set({ backgroundColor: o.backgroundColor ? "" : "#fff3a3" })}>Text background</button><button className="rounded-md border border-border px-2 py-1.5 text-xs" onClick={() => set({ stroke: o.stroke ? "" : "#111111", strokeWidth: o.strokeWidth ? 0 : 1, paintFirst: "stroke" })}>Text outline</button></div>
+    <Slider label="Text transparency" value={(o.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => set({ opacity: v / 100 })} />
   </Section>;
   if (mode === "position") return <Section title="Position & size">
     <div className="mx-auto grid w-28 grid-cols-3 gap-1"><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(0, -1)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowUp className="mx-auto h-4 w-4" /></button><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(-1, 0)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowLeft className="mx-auto h-4 w-4" /></button><span className="flex items-center justify-center text-[10px] text-muted-foreground">1px</span><button className="rounded border border-border p-2" onPointerDown={() => startNudge(1, 0)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowRight className="mx-auto h-4 w-4" /></button><span /><button className="rounded border border-border p-2" onPointerDown={() => startNudge(0, 1)} onPointerUp={stopNudge} onPointerCancel={stopNudge} onPointerLeave={stopNudge}><ArrowDown className="mx-auto h-4 w-4" /></button><span /></div>
@@ -1092,6 +1104,7 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onP
     <div className="grid grid-cols-2 gap-2"><NumberField label="Width" value={o.getScaledWidth?.() ?? o.width ?? 0} onChange={(v) => set({ scaleX: v / Math.max(1, o.width ?? 1) })} /><NumberField label="Height" value={o.getScaledHeight?.() ?? o.height ?? 0} onChange={(v) => set({ scaleY: v / Math.max(1, o.height ?? 1) })} /></div>
     {isText && <NumberField label="Padding" value={o.padding ?? 0} onChange={(v) => set({ padding: v })} />}
     <Slider label="Rotation" value={o.angle ?? 0} min={-180} max={180} onChange={(v) => set({ angle: v })} /><Slider label="Opacity (%)" value={(o.opacity ?? 1) * 100} min={0} max={100} onChange={(v) => set({ opacity: v / 100 })} />
+    <div className="flex gap-1"><IconBtn label="Flip horizontal" onClick={() => set({ flipX: !o.flipX })}><FlipHorizontal /></IconBtn><IconBtn label="Flip vertical" onClick={() => set({ flipY: !o.flipY })}><FlipVertical /></IconBtn></div>
   </Section>;
   if (mode === "fill") return <Section title="Fill">
     <Slider label="Opacity (%)" value={fillAlpha * 100} min={0} max={100} onChange={(v) => set({ fill: withAlpha(o.fill, v / 100) })} />
@@ -1104,7 +1117,7 @@ function ContextualTools({ o, f, mode, commit, onEraseBackground, eraseBusy, onP
     {typeof o.stroke === "string" && <Color label="Stroke colour" value={toHex(o.stroke, "#111111")} onChange={(v) => set({ stroke: withAlpha(v, strokeAlpha) })} onPick={onPickColor} />}
   </Section>;
   return <Section title="Effects">
-    {o.type === "image" && <><p className="text-xs font-semibold">Background eraser</p><div className="flex gap-1 text-xs">{([["smart", "Smart AI"], ["auto", "Edges"], ["color", "Colour"]] as const).map(([k, l]) => <button key={k} disabled={!!eraseBusy} className={`flex-1 rounded-md py-1.5 ${eraseMode === k ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode(k)}>{l}</button>)}</div><p className="text-[11px] text-muted-foreground">{eraseMode === "smart" ? "Best for people, products and pets. Detects the subject and removes everything else." : eraseMode === "auto" ? "Removes the plain background touching the photo edges." : "Removes one colour everywhere in the photo."}</p>{eraseMode === "color" && <div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button type="button" className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={async () => { const c = await onPickColor(); if (c) setEraseColor(c); }}>Pick from canvas</button></div>}{eraseMode !== "smart" && <Slider label="Strength" value={eraseTol} min={0} max={100} onChange={setEraseTol} />}<button disabled={!!eraseBusy} className="w-full rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60" onClick={() => onEraseBackground(eraseMode, eraseColor, eraseTol)}>{eraseBusy ?? "Erase background"}</button><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div></>}
+    {o.type === "image" && <><ImageCrop o={o} set={set} /><p className="text-xs font-semibold">Background eraser</p><div className="flex gap-1 text-xs">{([["smart", "Smart AI"], ["auto", "Edges"], ["color", "Colour"]] as const).map(([k, l]) => <button key={k} disabled={!!eraseBusy} className={`flex-1 rounded-md py-1.5 ${eraseMode === k ? "bg-primary text-primary-foreground" : "border border-border"}`} onClick={() => setEraseMode(k)}>{l}</button>)}</div><p className="text-[11px] text-muted-foreground">{eraseMode === "smart" ? "Best for people, products and pets. Detects the subject and removes everything else." : eraseMode === "auto" ? "Removes the plain background touching the photo edges." : "Removes one colour everywhere in the photo."}</p>{eraseMode === "color" && <div className="flex items-center gap-2"><input type="color" value={eraseColor} onChange={(e) => setEraseColor(e.target.value)} className="h-8 w-10 rounded border border-border" /><button type="button" className="rounded-md border border-border px-2 py-1.5 text-[11px] hover:bg-muted" onClick={async () => { const c = await onPickColor(); if (c) setEraseColor(c); }}>Pick from canvas</button></div>}{eraseMode !== "smart" && <Slider label="Strength" value={eraseTol} min={0} max={100} onChange={setEraseTol} />}<button disabled={!!eraseBusy} className="w-full rounded-md bg-primary py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60" onClick={() => onEraseBackground(eraseMode, eraseColor, eraseTol)}>{eraseBusy ?? "Erase background"}</button><div className="grid grid-cols-4 gap-1"><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("square")}>Square</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("circle")}>Circle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("rounded")}>Rounded</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("triangle")}>Triangle</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("star")}>Star</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("heart")}>Heart</button><button className="rounded-md border border-border px-1 py-1 text-[11px]" onClick={() => onMaskImage("polygon")}>Polygon</button></div><ImageAdjustments o={o} f={f} commit={commit} /></>}
     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!shadow} onChange={(e) => e.target.checked ? shadowSet({}) : set({ shadow: null })} /> Shadow</label>
     {shadow && <><Color label="Shadow colour" value={toHex(shadow.color)} onChange={(v) => shadowSet({ color: v })} /><Slider label="Blur" value={shadow.blur} min={0} max={100} onChange={(v) => shadowSet({ blur: v })} /></>}
     {isText && <><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Number(o.text3dDepth ?? 0) > 0} onChange={(e) => { const depth = e.target.checked ? 10 : 0; set({ text3dDepth: depth, shadow: e.target.checked ? new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: depth, offsetY: depth }) : null }); }} /> 3D text</label>{Number(o.text3dDepth ?? 0) > 0 && <Slider label="3D depth" value={Number(o.text3dDepth)} min={1} max={40} onChange={(v) => set({ text3dDepth: v, shadow: new f.Shadow({ color: "rgba(0,0,0,0.4)", blur: 0, offsetX: v, offsetY: v }) })} />}<label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={!!o.textReflection} onChange={(e) => set({ textReflection: e.target.checked })} /> Reflection</label></>}
@@ -1123,6 +1136,28 @@ function DesignEdit({ c, commit }: { c: Obj; commit: () => void }) {
     <Slider label="Warmth" value={a.warmth} min={0} max={100} onChange={v => set("warmth", v)} />
     <Button variant="outline" className="mt-3 w-full" onClick={() => { c.designAdjustments = { ...DEFAULT_ADJUSTMENTS }; commit(); }}><RotateCcw /> Reset adjustments</Button>
   </Section>;
+}
+
+function ImageAdjustments({ o, f, commit }: { o: Obj; f: Fab; commit: () => void }) {
+  const [values, setValues] = useState<Record<string, number>>({ brightness: 0, contrast: 0, saturation: 0, blur: 0, temperature: 0, tint: 0, highlights: 0, shadows: 0, sharpen: 0, vignette: 0, ...(o.imageAdjustments ?? {}) });
+  const update = (key: string, value: number) => {
+    const next = { ...values, [key]: value };
+    setValues(next);
+    o.imageAdjustments = next;
+    const filters: Obj[] = [];
+    const api = f.filters as Obj;
+    if (next.brightness) filters.push(new api.Brightness({ brightness: next.brightness / 100 }));
+    if (next.contrast) filters.push(new api.Contrast({ contrast: next.contrast / 100 }));
+    if (next.saturation) filters.push(new api.Saturation({ saturation: next.saturation / 100 }));
+    if (next.blur) filters.push(new api.Blur({ blur: next.blur / 100 }));
+    if (next.temperature || next.tint) filters.push(new api.HueRotation({ rotation: (next.temperature + next.tint) / 100 }));
+    if (next.sharpen > 0 && api.Convolute) filters.push(new api.Convolute({ matrix: [0, -1, 0, -1, 5 + next.sharpen / 20, -1, 0, -1, 0] }));
+    o.filters = filters;
+    o.applyFilters?.();
+    o.canvas?.requestRenderAll();
+    commit();
+  };
+  return <div className="mt-3 border-t border-border pt-3"><p className="mb-2 text-xs font-semibold">Image adjustments</p><Slider label="Brightness" value={values.brightness ?? 0} min={-100} max={100} onChange={(v) => update("brightness", v)} /><Slider label="Contrast" value={values.contrast ?? 0} min={-100} max={100} onChange={(v) => update("contrast", v)} /><Slider label="Saturation" value={values.saturation ?? 0} min={-100} max={100} onChange={(v) => update("saturation", v)} /><Slider label="Blur" value={values.blur ?? 0} min={0} max={100} onChange={(v) => update("blur", v)} /><Slider label="Temperature" value={values.temperature ?? 0} min={-100} max={100} onChange={(v) => update("temperature", v)} /><Slider label="Tint" value={values.tint ?? 0} min={-100} max={100} onChange={(v) => update("tint", v)} /><Slider label="Highlights" value={values.highlights ?? 0} min={-100} max={100} onChange={(v) => update("highlights", v)} /><Slider label="Shadows" value={values.shadows ?? 0} min={-100} max={100} onChange={(v) => update("shadows", v)} /><Slider label="Sharpen" value={values.sharpen ?? 0} min={0} max={100} onChange={(v) => update("sharpen", v)} /><Slider label="Vignette" value={values.vignette ?? 0} min={0} max={100} onChange={(v) => update("vignette", v)} /><button className="w-full rounded-md border border-border py-1.5 text-xs hover:bg-muted" onClick={() => { o.filters = []; o.imageAdjustments = {}; setValues({}); o.applyFilters?.(); o.canvas?.requestRenderAll(); commit(); }}>Reset image adjustments</button></div>;
 }
 
 function ImageCrop({ o, set }: { o: Obj; set: (p: Record<string, unknown>) => void }) {
