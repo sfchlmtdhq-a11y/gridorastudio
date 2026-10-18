@@ -14,6 +14,9 @@ import { FontPicker } from "./FontPicker";
 import { DEFAULT_ADJUSTMENTS, installDesignAdjustments, type DesignAdjustments } from "@/lib/design-adjustments";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
 import { askGeminiDesignAssistant, type GeminiAction } from "@/lib/gemini";
+import { DesignAssistant, type AssistantMessage } from "./DesignAssistant";
+import { responseSchema } from "@/lib/design-actions";
+import { recordSnapshot } from "@/lib/editor-history";
 import { EditorToolDetails } from "./EditorToolDetails";
 
 type Fab = typeof import("fabric");
@@ -72,9 +75,10 @@ export function Editor({ id }: { id: string }) {
   const snapAlignRef = useRef(false);
   const [alignmentGuide, setAlignmentGuide] = useState<{ axis: "x" | "y"; value: number } | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState("");
+  const aiBusyRef = useRef(false);
+  const [aiUndoIndex, setAiUndoIndex] = useState<number | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiMessages, setAiMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [aiMessages, setAiMessages] = useState<AssistantMessage[]>([]);
   const [bottomMode, setBottomMode] = useState<"text" | "elements" | "background" | "filters">("text");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -149,39 +153,39 @@ export function Editor({ id }: { id: string }) {
     const c = fc.current, h = hist.current;
     if (!c || h.lock) return;
     const s = JSON.stringify(c.toObject(PROPS));
-    if (h.stack[h.i] === s) return;
-    h.stack = h.stack.slice(0, h.i + 1);
-    h.stack.push(s);
-    if (h.stack.length > 60) h.stack.shift();
-    h.i = h.stack.length - 1;
+    if (!recordSnapshot(h, s)) return;
     force();
   }, []);
 
   const commit = useCallback(() => {
     fc.current?.requestRenderAll();
     force();
+    if (hist.current.lock) return;
     clearTimeout(timers.current.snap);
     timers.current.snap = window.setTimeout(snapshot, 300);
     scheduleSave();
   }, [snapshot, scheduleSave]);
 
-  const restore = useCallback(async (s: string) => {
+  const restore = useCallback(async (state: string) => {
     const c = fc.current, h = hist.current;
+    if (!c || h.lock) return;
+    clearTimeout(timers.current.snap);
+    clearTimeout(timers.current.save);
     h.lock = true;
-    await c.loadFromJSON(JSON.parse(s));
-    c.requestRenderAll();
-    h.lock = false;
-    force();
-    scheduleSave();
+    try { await c.loadFromJSON(JSON.parse(state)); c.discardActiveObject(); c.requestRenderAll(); }
+    finally { h.lock = false; force(); scheduleSave(); }
   }, [scheduleSave]);
-
   const undo = useCallback(() => {
     const h = hist.current;
-    if (h.i > 0) { h.i--; const s = h.stack[h.i]; if (s) restore(s); }
-  }, [restore]);
+    if (h.lock || aiBusyRef.current) return;
+    clearTimeout(timers.current.snap); snapshot();
+    if (h.i > 0) { h.i--; const state = h.stack[h.i]; if (state) void restore(state); }
+  }, [restore, snapshot]);
   const redo = useCallback(() => {
     const h = hist.current;
-    if (h.i < h.stack.length - 1) { h.i++; const s = h.stack[h.i]; if (s) restore(s); }
+    if (h.lock || aiBusyRef.current) return;
+    clearTimeout(timers.current.snap);
+    if (h.i < h.stack.length - 1) { h.i++; const state = h.stack[h.i]; if (state) void restore(state); }
   }, [restore]);
 
   // init
@@ -300,7 +304,7 @@ export function Editor({ id }: { id: string }) {
     else if (kind === "line") o = new f.Line([0, 0, s * 1.5, 0], { stroke: "#111111", strokeWidth: Math.max(4, s / 25), name: "Line" });
     else if (kind === "arrow") o = new f.Path(`M 0 20 L ${s * 1.2} 20 M ${s * 1.2 - 28} 4 L ${s * 1.2} 20 L ${s * 1.2 - 28} 36`, { fill: "", stroke: "#111111", strokeWidth: Math.max(4, s / 25), name: "Arrow" });
     else if (kind === "frame") o = new f.Rect({ width: s, height: s, fill: "rgba(0,0,0,0)", stroke: "#111111", strokeWidth: Math.max(4, s / 25), name: "Frame" });
-    else if (kind === "grid") { const lines = Array.from({ length: 5 }, (_, i) => new f.Line([0, (s * i) / 4, s, (s * i) / 4], { stroke: "#111111", strokeWidth: 2 })); o = new f.Group([...lines, ...Array.from({ length: 5 }, (_, i) => new f.Line([(s * i) / 4, 0, (s * i) / 4, s], { stroke: "#111111", strokeWidth: 2 }))], { name: "Grid" }); }
+    else if (kind === "grid") { const lines = Array.from({ length: 5 }, (_, i) => new f.Line([0, (s * i) / 4, s, (s * i) / 4], { stroke: "#111111", strokeWidth: 2 })); o = new f.Group([...lines, ...Array.from({ length: 5 }, (_, i) => new f.Line([(s * i) / 4, 0, (s * i) / 4, s], { stroke: "#111111", strokeWidth: 2 }))]); o.set({name:"Grid"}); }
     else {
       const pts = [];
       const n = kind === "star" ? 10 : kind === "hexagon" ? 6 : 5;
@@ -483,36 +487,68 @@ export function Editor({ id }: { id: string }) {
   };
   const applyAiAction = async (a: GeminiAction) => {
     const c = fc.current, f = fab.current;
-    if (!c || !f) return;
+    if (!c || !f) throw new Error("The canvas is not ready.");
     const fallback = active();
     const ref = a as Obj;
-    const o = ref.targetIndex !== undefined ? c.getObjects()[ref.targetIndex] : ref.targetName ? c.getObjects().find((x: Obj) => String(x.name ?? "").toLowerCase().includes(String(ref.targetName).toLowerCase())) : fallback;
+    const o = ref.targetIndex !== undefined ? aiTargets.current[ref.targetIndex] : ref.targetName ? c.getObjects().find((x: Obj) => String(x.name ?? "").toLowerCase() === String(ref.targetName).toLowerCase()) : fallback;
+    if (ref.targetName && c.getObjects().filter((x:Obj)=>String(x.name??"").toLowerCase()===String(ref.targetName).toLowerCase()).length>1) throw new Error("More than one object has that name. Select the one you want to edit.");
+    if ((ref.targetIndex !== undefined || ref.targetName) && (!o || !c.getObjects().includes(o))) throw new Error("The requested object no longer exists.");
     if (o) c.setActiveObject(o);
+    if (a.type === "generateImage" || a.type === "attachImage") throw new Error("Image generation and attachment are not available in this assistant yet.");
+    if (a.type === "adjustDesign") { const {type, ...values} = a; c.designAdjustments = {...c.designAdjustments, ...values}; commit(); return; }
+    if (a.type === "groupSelected") { const selected = c.getActiveObjects(); if(selected.length < 2) throw new Error("Select at least two objects to group."); c.discardActiveObject(); c.remove(...selected); const group = new f.Group(selected); group.set({name:"Group"}); c.add(group); c.setActiveObject(group); commit(); return; }
+    if (a.type === "ungroupSelected") { if(o?.type !== "group") throw new Error("Select a group to ungroup."); const children = o.removeAll(); c.remove(o); c.add(...children); c.setActiveObject(new f.ActiveSelection(children,{canvas:c})); commit(); return; }
     if (a.type === "addText") { rememberPaletteColor(a.fill); const text = new f.Textbox(a.text, { width: W() * 0.6, fontSize: a.fontSize ?? Math.round(Math.min(W(), H()) / 12), fill: a.fill ?? "#111111", fontWeight: a.fontWeight ?? "normal", fontFamily: a.fontFamily ?? "Manrope", textAlign: a.textAlign ?? "center", charSpacing: a.charSpacing ?? 0, lineHeight: a.lineHeight ?? 1.16, name: "AI text" }); add(text); text.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2 }); text.setCoords(); commit(); return; }
     if (a.type === "addIcon") { rememberPaletteColor(a.fill); addIcon(a.icon); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? "#111111" }); if (a.scale) { created.scaleX = (created.scaleX ?? 1) * a.scale; created.scaleY = (created.scaleY ?? 1) * a.scale; } created.setCoords(); commit(); } return; }
-    if (a.type === "addShape") { rememberPaletteColor(a.fill); rememberPaletteColor(a.stroke); addShape(a.shape); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? created.fill, stroke: a.stroke ?? created.stroke, strokeWidth: a.strokeWidth ?? created.strokeWidth }); if (a.width) created.scaleToWidth(a.width); if (a.height) created.scaleToHeight(a.height); created.setCoords(); commit(); } return; }
+    if (a.type === "addShape") { rememberPaletteColor(a.fill); rememberPaletteColor(a.stroke); addShape(a.shape); const created = active(); if (created) { created.set({ left: a.x ?? W() / 2, top: a.y ?? H() / 2, fill: a.fill ?? created.fill, stroke: a.stroke ?? created.stroke, strokeWidth: a.strokeWidth ?? created.strokeWidth }); if (a.width) created.set({scaleX:a.width / Math.max(1,created.width)}); if (a.height) created.set({scaleY:a.height / Math.max(1,created.height)}); created.setCoords(); commit(); } return; }
     if (a.type === "setBackground") { c.backgroundImage = undefined; c.backgroundColor = a.gradientStart && a.gradientEnd ? makeGradient(f, a.gradientStart, a.gradientEnd, a.angle ?? 45, W(), H(), "pixels") : a.color ?? "#ffffff"; rememberPaletteColor(a.color); rememberPaletteColor(a.gradientStart); rememberPaletteColor(a.gradientEnd); c.requestRenderAll(); commit(); return; }
     if (a.type === "arrange") { const list = c.getObjects().filter((x: Obj) => x !== c.backgroundImage); if (a.alignment === "vertical") list.forEach((x: Obj, i: number) => x.set({ left: W() / 2, top: H() * (i + 1) / (list.length + 1) })); else if (a.alignment === "center") list.forEach((x: Obj) => x.set({ left: W() / 2, top: H() / 2 })); else list.forEach((x: Obj, i: number) => x.set({ left: W() * (i + 1) / (list.length + 1), top: H() / 2 })); list.forEach((x: Obj) => x.setCoords()); c.requestRenderAll(); commit(); return; }
     const editable = o && o !== c.backgroundImage;
-    if (!editable) return;
+    if (!editable) throw new Error("Select an object or specify its name before editing it.");
     if (a.type === "deleteSelected") { del(); return; }
     if (a.type === "duplicateSelected") { c.setActiveObject(o); await dup(); const copy = active(); if (copy && (a.dx !== undefined || a.dy !== undefined)) { copy.set({ left: (copy.left ?? 0) + (a.dx ?? 0), top: (copy.top ?? 0) + (a.dy ?? 0) }); copy.setCoords(); commit(); } return; }
     if (a.type === "moveSelected" && o) { o.set({ left: (o.left ?? 0) + a.dx, top: (o.top ?? 0) + a.dy }); o.setCoords(); commit(); return; }
     if (a.type === "setOrder" && o) { order(a.direction === "front" ? "top" : a.direction === "forward" ? "up" : a.direction === "backward" ? "down" : "bottom"); return; }
-    if (a.type === "updateSelected" && o) { const next: Record<string, unknown> = {}; if (a.text !== undefined) next.text = a.text; if (a.fill) { next.fill = a.fill; rememberPaletteColor(a.fill); } if (a.fontSize) next.fontSize = a.fontSize; if (a.fontFamily) next.fontFamily = a.fontFamily; if (a.fontWeight) next.fontWeight = a.fontWeight; if (a.textAlign) next.textAlign = a.textAlign; if (a.charSpacing !== undefined) next.charSpacing = a.charSpacing; if (a.lineHeight !== undefined) next.lineHeight = a.lineHeight; if (a.left !== undefined) next.left = a.left; if (a.top !== undefined) next.top = a.top; if (a.angle !== undefined) next.angle = a.angle; if (a.scale !== undefined) { next.scaleX = a.scale; next.scaleY = a.scale; } if (a.opacity !== undefined) next.opacity = a.opacity; if (a.stroke) { next.stroke = a.stroke; rememberPaletteColor(a.stroke); } if (a.strokeWidth !== undefined) next.strokeWidth = a.strokeWidth; if (a.rx !== undefined) next.rx = a.rx; if (a.ry !== undefined) next.ry = a.ry; o.set(next); o.setCoords(); commit(); return; }
-    if (a.type === "alignSelected" && o) { const w = o.getScaledWidth?.() ?? o.width ?? 0, h = o.getScaledHeight?.() ?? o.height ?? 0; o.set({ left: a.alignment === "left" ? w / 2 : a.alignment === "right" ? W() - w / 2 : W() / 2, top: a.alignment === "top" ? h / 2 : a.alignment === "bottom" ? H() - h / 2 : H() / 2 }); o.setCoords(); commit(); return; }
+    if (a.type === "updateSelected") {
+      const { type, targetIndex, targetName, scale, locked, width, height, shadow, ...next } = a;
+      if (next.text !== undefined && !isTextObject(o)) throw new Error("The selected object is not text.");
+      o.set(next); if(shadow) o.set({shadow:new f.Shadow(shadow)});
+      if(scale !== undefined) o.set({scaleX:scale,scaleY:scale});
+      if(width !== undefined) o.set({scaleX:width / Math.max(1,o.width)});
+      if(height !== undefined) o.set({scaleY:height / Math.max(1,o.height)});
+      if(locked !== undefined) {o.set({lockedLayer:locked,selectable:!locked,evented:!locked}); if(locked)c.discardActiveObject();}
+      o.setCoords(); commit(); return;
+    }
+    if (a.type === "alignSelected") {
+      const w=o.getScaledWidth(), h=o.getScaledHeight();
+      const x=a.alignment.includes("left")?w/2:a.alignment.includes("right")?W()-w/2:W()/2;
+      const y=a.alignment.includes("top")?h/2:a.alignment.includes("bottom")?H()-h/2:H()/2;
+      o.setPositionByOrigin(new f.Point(x,y),"center","center"); o.setCoords(); commit(); return;
+    }
+    throw new Error("That operation is not supported yet.");
   };
-  const runAssistant = async () => {
-    const prompt = aiPrompt.trim();
-    if (!prompt || aiBusy || !fc.current) return;
-    setAiPrompt(""); setAiMessages((m) => [...m, { role: "user", text: prompt }]); setAiBusy(true);
+  const aiTargets = useRef<Obj[]>([]);
+  const runAssistant = async (text: string) => {
+    const prompt=text.trim(), c=fc.current;
+    if(!prompt || aiBusyRef.current || !c || hist.current.lock) return;
+    aiBusyRef.current=true; setAiBusy(true);
+    const history=aiMessages.map(({role,text})=>({role,text}));
+    setAiMessages(m=>[...m,{role:"user",text:prompt}]);
+    let completed=0;
     try {
-      const selected = active();
-      const result = await askAssistant({ data: { prompt, canvas: { width: W(), height: H(), background: String(fc.current.backgroundColor ?? ""), selected: selected ? { type: selected.type, text: selected.text, left: selected.left, top: selected.top, width: selected.getScaledWidth?.() ?? selected.width, height: selected.getScaledHeight?.() ?? selected.height, fill: typeof selected.fill === "string" ? selected.fill : undefined } : null, objects: fc.current.getObjects().slice(0, 30).map((x: Obj, index: number) => ({ index, type: x.type, name: x.name, text: x.text, left: x.left, top: x.top, width: x.getScaledWidth?.() ?? x.width, height: x.getScaledHeight?.() ?? x.height, angle: x.angle, opacity: x.opacity, fill: typeof x.fill === "string" ? x.fill : undefined })) } } });
-      for (const action of result.actions) await applyAiAction(action);
-      setAiMessages((m) => [...m, { role: "assistant", text: result.reply }]);
-    } catch (error) { setAiMessages((m) => [...m, { role: "assistant", text: error instanceof Error ? error.message : "The assistant could not complete that request." }]); }
-    finally { setAiBusy(false); }
+      const describe=(x:Obj,index?:number)=>({index,type:x.type,name:x.name,text:x.text,left:x.left,top:x.top,originX:x.originX,originY:x.originY,width:x.getScaledWidth?.(),height:x.getScaledHeight?.(),fontSize:x.fontSize,fontWeight:x.fontWeight,fontFamily:x.fontFamily,angle:x.angle,locked:x.lockedLayer,fill:typeof x.fill==="string"?x.fill:undefined});
+      const selected=active(); aiTargets.current=[...c.getObjects()];
+      const before=JSON.stringify(c.toObject(PROPS));
+      const result=responseSchema.parse(await askAssistant({data:{prompt,history,attachments:[],canvas:{width:W(),height:H(),background:String(c.backgroundColor??""),selected:selected?describe(selected):null,objects:aiTargets.current.map(describe)}}}));
+      if(JSON.stringify(c.toObject(PROPS))!==before) throw new Error("Your design changed while I was thinking. Please send the instruction again.");
+      clearTimeout(timers.current.snap); clearTimeout(timers.current.save); snapshot();
+      const undoIndex=hist.current.i;
+      hist.current.lock=true;
+      try { for(const action of result.actions) { await applyAiAction(action); completed++; } }
+      finally { hist.current.lock=false; clearTimeout(timers.current.snap); c.requestRenderAll(); snapshot(); scheduleSave(); if(hist.current.i>undoIndex)setAiUndoIndex(undoIndex); }
+      setAiMessages(m=>[...m,{role:"assistant",text:result.actions.length?`Applied ${completed} change${completed===1?"":"s"} to your canvas.`:result.reply}]);
+    } catch(error) { setAiMessages(m=>[...m,{role:"assistant",error:true,text:`${completed?`Applied ${completed} change(s); the remaining changes stopped. `:""}${error instanceof Error?error.message:"The request failed."}`}]); }
+    finally {aiBusyRef.current=false;setAiBusy(false);}
   };
   const toggleLock = (o: Obj) => {
     const l = !o.lockedLayer;
@@ -673,9 +709,9 @@ export function Editor({ id }: { id: string }) {
         <nav aria-label="Editor actions" className="grid h-[5.5rem] grid-cols-4 grid-rows-2 gap-1 border-t border-border/70 bg-muted/20 px-1.5 py-1">
           <NavIconBtn label="Add" active={adding} onClick={() => { setAdding(true); setAddPickerView("menu"); setPanelOpen(false); }}><Plus /></NavIconBtn>
           <NavIconBtn label="Save" active={exportOpen} onClick={() => setExportOpen((v) => !v)}><Save /></NavIconBtn>
-          <NavIconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></NavIconBtn>
+          <NavIconBtn label="Redo" disabled={h.i >= h.stack.length - 1 || aiBusy || h.lock} onClick={redo}><Redo2 /></NavIconBtn>
           <NavIconBtn label="Share" active={shareOpen} onClick={() => setShareOpen((v) => !v)}><Share2 /></NavIconBtn>
-          <NavIconBtn label="Zoom to 100%" onClick={() => applyZoom(1)}><Scan /></NavIconBtn>
+          <NavIconBtn label="AI Design Assistant" active={aiOpen} disabled={!ready} onClick={() => {setAiOpen(v=>!v);setPanelOpen(false);}}><Sparkles /></NavIconBtn>
           <NavIconBtn label="Grid guides" active={snapAlign} onClick={() => setSnapAlign((v) => !v)}><Grid2X2 /></NavIconBtn>
           <NavIconBtn label="Options" active={optionsOpen} onClick={() => setOptionsOpen((v) => !v)}><Settings2 /></NavIconBtn>
           <NavIconBtn label="Layers" active={layerOpen} onClick={() => { setLayerOpen(true); setLayerSelection([]); setSelectedTool(null); setPanelOpen(true); }}><Layers /></NavIconBtn>
@@ -687,7 +723,6 @@ export function Editor({ id }: { id: string }) {
 
       {adding && <><div className="fixed inset-0 z-[55] bg-black/40 backdrop-blur-md" aria-hidden="true" /><section role="dialog" aria-modal="true" aria-label="Add to design" className="fixed inset-x-5 top-1/2 z-[60] max-h-[78vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card/95 p-3 shadow-2xl backdrop-blur-xl sm:left-1/2 sm:w-[min(92vw,24rem)] sm:-translate-x-1/2"><div className="flex items-center justify-between border-b border-border px-2 pb-3"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Add to design</p><h2 className="mt-1 text-lg font-semibold">{addPickerView === "icons" ? "Choose an icon" : "What would you like to add?"}</h2></div><button className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Cancel add" title="Cancel" onClick={closeAddPicker}><X className="h-5 w-5" /></button></div>{addPickerView === "menu" ? <div className="mt-2 divide-y divide-border/70">{[["Text", <Type key="text" />, chooseAddText], ["Images", <ImagePlus key="images" />, chooseAddImage], ["Icons", <Star key="icons" />, () => setAddPickerView("icons")], ["Date", <CalendarDays key="date" />, chooseAddDate], ["Bezier", <Pencil key="bezier" />, chooseAddBezier]].map(([label, icon, on]) => <button key={label as string} className="flex w-full items-center gap-4 rounded-lg px-3 py-4 text-left transition-colors hover:bg-muted" onClick={on as () => void}><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary [&_svg]:h-5 [&_svg]:w-5">{icon as ReactNode}</span><span className="text-base font-medium">{label as string}</span><ArrowRight className="ml-auto h-4 w-4 text-muted-foreground" /></button>)}</div> : <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">{Object.entries(ICONS).map(([name, path]) => <button key={name} className="flex aspect-square flex-col items-center justify-center gap-1 rounded-xl border border-border transition-colors hover:border-primary hover:bg-primary/10" title={`Add ${name}`} onClick={() => chooseAddIcon(name)}><svg viewBox="0 0 24 24" className="h-8 w-8 fill-current text-primary" aria-hidden="true"><path d={path} /></svg><span className="text-[10px] text-muted-foreground">{name}</span></button>)}</div>}</section></>}
 
-      {aiOpen && <section className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"><div className="flex items-center gap-2 border-b border-border p-3"><Sparkles className="h-4 w-4 text-primary" /><h2 className="font-semibold">Design assistant</h2><button className="ml-auto rounded p-1 hover:bg-muted" onClick={() => setAiOpen(false)} aria-label="Close assistant"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{aiMessages.length === 0 && <p className="text-xs text-muted-foreground">Ask me to add, edit, move, arrange, or style objects on your canvas.</p>}{aiMessages.map((message, i) => <div key={i} className={`rounded-lg p-2 text-sm ${message.role === "user" ? "ml-5 bg-primary/15" : "mr-5 bg-muted"}`}>{message.text}</div>)}{aiBusy && <p className="text-xs text-muted-foreground">Working on your design…</p>}</div><form className="flex gap-2 border-t border-border p-3" onSubmit={(e) => { e.preventDefault(); void runAssistant(); }}><input className="field min-w-0 flex-1" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Try: add a blue circle" disabled={aiBusy} /><button className="rounded-lg bg-primary p-2 text-primary-foreground disabled:opacity-50" disabled={aiBusy || !aiPrompt.trim()} aria-label="Send command"><Send className="h-4 w-4" /></button></form></section>}
       {infoPanel && <><div className="fixed inset-0 z-50 bg-black/35 backdrop-blur-md" aria-hidden="true" onClick={() => setInfoPanel(null)} /><section role="dialog" aria-modal="true" className="fixed inset-x-4 top-1/2 z-[60] max-h-[80vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card/95 p-5 shadow-2xl backdrop-blur-xl sm:left-1/2 sm:w-[min(92vw,30rem)] sm:-translate-x-1/2"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">SFCH Limited</p><h2 className="mt-1 text-xl font-semibold">{infoPanel === "about" ? "About us" : "Contact us"}</h2></div><button className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close information" onClick={() => setInfoPanel(null)}><X className="h-5 w-5" /></button></div>{infoPanel === "about" ? <p className="mt-5 text-sm leading-7 text-muted-foreground">SFCH Limited is a creative company passionate about designing and creating websites.</p> : <div className="mt-5 space-y-3 text-sm"><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="mailto:sfchlimited@gmail.com">sfchlimited@gmail.com</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="mailto:sfchlmtdhq@gmail.com">sfchlmtdhq@gmail.com</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="tel:07077579322">07077579322</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="https://instagram.com/sfch.limited" target="_blank" rel="noreferrer">@sfch.limited</a></div>}</section></>}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* canvas area */}
@@ -722,7 +757,8 @@ export function Editor({ id }: { id: string }) {
           {/* zoom controls */}
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card/95 px-2 py-1 shadow-lg backdrop-blur">
             <IconBtn label="Zoom out" onClick={() => applyZoom(zoom / 1.2)}><ZoomOut /></IconBtn>
-            <span className="w-12 text-center text-xs tabular-nums">{Math.round(zoom * 100)}%</span>
+            <Button variant="ghost" size="sm" aria-label="Zoom to 100%" onClick={()=>applyZoom(1)} className="w-12 px-0 text-xs tabular-nums">{Math.round(zoom * 100)}%</Button>
+            <IconBtn label="Undo" disabled={h.i<=0||aiBusy||h.lock} onClick={undo}><Undo2/></IconBtn>
             <IconBtn label="Zoom in" onClick={() => applyZoom(zoom * 1.2)}><ZoomIn /></IconBtn>
             <IconBtn label="Fit to screen" onClick={fit}><Maximize /></IconBtn>
             <IconBtn label="Pan" active={hand} onClick={() => setHand((v) => !v)}><Hand /></IconBtn>
@@ -730,6 +766,7 @@ export function Editor({ id }: { id: string }) {
           </div>
         </div>
 
+        {aiOpen && <DesignAssistant messages={aiMessages} busy={aiBusy} onClose={()=>setAiOpen(false)} onSend={runAssistant} canUndo={aiUndoIndex!==null && h.i===aiUndoIndex+1 && !h.lock} onUndo={()=>{undo();setAiUndoIndex(null);}} />}
         {layerOpen && <div className="fixed inset-0 z-30 bg-black/25 backdrop-blur-md" aria-hidden="true" />}
         {/* side panel */}
         <aside className={`${panelOpen ? "grid" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[clamp(12rem,30vh,22rem)] max-h-[calc(100dvh-4rem)] grid-rows-[auto_minmax(0,1fr)] rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}>
@@ -793,11 +830,11 @@ function DrawingDetails({ o, onChange, onContinue }: { o: Obj | null; onChange: 
 }
 function NavIconBtn({ children, label, onClick, disabled, active }: { children: ReactNode; label: string; onClick: () => void; disabled?: boolean; active?: boolean }) {
   return (
-    <button title={label} aria-label={label} disabled={disabled} onClick={onClick}
+    <Button variant="ghost" title={label} aria-label={label} disabled={disabled} onClick={onClick}
       className={`group relative flex min-h-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 [&_svg]:h-[1.15rem] [&_svg]:w-[1.15rem] ${active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-card hover:text-foreground"}`}>
       {children}
       <span className="pointer-events-none absolute bottom-0.5 left-1/2 h-0.5 w-0 -translate-x-1/2 rounded-full bg-primary-foreground/80 transition-all group-hover:w-4" />
-    </button>
+    </Button>
   );
 }
 const Grid = ({ children }: { children: ReactNode }) => <div className="grid grid-cols-4 gap-2">{children}</div>;
@@ -1165,18 +1202,18 @@ function ImageAdjustments({ o, f, commit }: { o: Obj; f: Fab; commit: () => void
     o.imageAdjustments = next;
     const filters: Obj[] = [];
     const api = f.filters as Obj;
-    if (next.brightness) filters.push(new api.Brightness({ brightness: next.brightness / 100 }));
-    if (next.contrast) filters.push(new api.Contrast({ contrast: next.contrast / 100 }));
-    if (next.saturation) filters.push(new api.Saturation({ saturation: next.saturation / 100 }));
-    if (next.blur) filters.push(new api.Blur({ blur: next.blur / 100 }));
-    if (next.temperature || next.tint) filters.push(new api.HueRotation({ rotation: (next.temperature + next.tint) / 100 }));
-    if (next.sharpen > 0 && api.Convolute) filters.push(new api.Convolute({ matrix: [0, -1, 0, -1, 5 + next.sharpen / 20, -1, 0, -1, 0] }));
+    if ((next["brightness"] ?? 0)) filters.push(new api.Brightness({ brightness: (next["brightness"] ?? 0) / 100 }));
+    if ((next["contrast"] ?? 0)) filters.push(new api.Contrast({ contrast: (next["contrast"] ?? 0) / 100 }));
+    if ((next["saturation"] ?? 0)) filters.push(new api.Saturation({ saturation: (next["saturation"] ?? 0) / 100 }));
+    if ((next["blur"] ?? 0)) filters.push(new api.Blur({ blur: (next["blur"] ?? 0) / 100 }));
+    if ((next["temperature"] ?? 0) || (next["tint"] ?? 0)) filters.push(new api.HueRotation({ rotation: ((next["temperature"] ?? 0) + (next["tint"] ?? 0)) / 100 }));
+    if ((next["sharpen"] ?? 0) > 0 && api.Convolute) filters.push(new api.Convolute({ matrix: [0, -1, 0, -1, 5 + (next["sharpen"] ?? 0) / 20, -1, 0, -1, 0] }));
     o.filters = filters;
     o.applyFilters?.();
     o.canvas?.requestRenderAll();
     commit();
   };
-  return <div className="mt-3 border-t border-border pt-3"><p className="mb-2 text-xs font-semibold">Image adjustments</p><Slider label="Brightness" value={values.brightness ?? 0} min={-100} max={100} onChange={(v) => update("brightness", v)} /><Slider label="Contrast" value={values.contrast ?? 0} min={-100} max={100} onChange={(v) => update("contrast", v)} /><Slider label="Saturation" value={values.saturation ?? 0} min={-100} max={100} onChange={(v) => update("saturation", v)} /><Slider label="Blur" value={values.blur ?? 0} min={0} max={100} onChange={(v) => update("blur", v)} /><Slider label="Temperature" value={values.temperature ?? 0} min={-100} max={100} onChange={(v) => update("temperature", v)} /><Slider label="Tint" value={values.tint ?? 0} min={-100} max={100} onChange={(v) => update("tint", v)} /><Slider label="Highlights" value={values.highlights ?? 0} min={-100} max={100} onChange={(v) => update("highlights", v)} /><Slider label="Shadows" value={values.shadows ?? 0} min={-100} max={100} onChange={(v) => update("shadows", v)} /><Slider label="Sharpen" value={values.sharpen ?? 0} min={0} max={100} onChange={(v) => update("sharpen", v)} /><Slider label="Vignette" value={values.vignette ?? 0} min={0} max={100} onChange={(v) => update("vignette", v)} /><button className="w-full rounded-md border border-border py-1.5 text-xs hover:bg-muted" onClick={() => { o.filters = []; o.imageAdjustments = {}; setValues({}); o.applyFilters?.(); o.canvas?.requestRenderAll(); commit(); }}>Reset image adjustments</button></div>;
+  return <div className="mt-3 border-t border-border pt-3"><p className="mb-2 text-xs font-semibold">Image adjustments</p><Slider label="Brightness" value={values["brightness"] ?? 0} min={-100} max={100} onChange={(v) => update("brightness", v)} /><Slider label="Contrast" value={values["contrast"] ?? 0} min={-100} max={100} onChange={(v) => update("contrast", v)} /><Slider label="Saturation" value={values["saturation"] ?? 0} min={-100} max={100} onChange={(v) => update("saturation", v)} /><Slider label="Blur" value={values["blur"] ?? 0} min={0} max={100} onChange={(v) => update("blur", v)} /><Slider label="Temperature" value={values["temperature"] ?? 0} min={-100} max={100} onChange={(v) => update("temperature", v)} /><Slider label="Tint" value={values["tint"] ?? 0} min={-100} max={100} onChange={(v) => update("tint", v)} /><Slider label="Highlights" value={values["highlights"] ?? 0} min={-100} max={100} onChange={(v) => update("highlights", v)} /><Slider label="Shadows" value={values["shadows"] ?? 0} min={-100} max={100} onChange={(v) => update("shadows", v)} /><Slider label="Sharpen" value={values["sharpen"] ?? 0} min={0} max={100} onChange={(v) => update("sharpen", v)} /><Slider label="Vignette" value={values["vignette"] ?? 0} min={0} max={100} onChange={(v) => update("vignette", v)} /><button className="w-full rounded-md border border-border py-1.5 text-xs hover:bg-muted" onClick={() => { o.filters = []; o.imageAdjustments = {}; setValues({}); o.applyFilters?.(); o.canvas?.requestRenderAll(); commit(); }}>Reset image adjustments</button></div>;
 }
 
 function ImageCrop({ o, set }: { o: Obj; set: (p: Record<string, unknown>) => void }) {
