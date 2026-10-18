@@ -1,4 +1,5 @@
 # Editor update
+- [ ] Replace toolbar zoom with the Gemini assistant, connect validated real-canvas actions, repair redo and verify saving/export.
 - [x] Replace tool navigation with Add, Layers, Edit, Transparent and an Add submenu.
 - [x] Add whole-design adjustments with saved and exported results.
 - [x] Add confirmation for transparent canvas background.
