@@ -647,19 +647,19 @@ export function Editor({ id }: { id: string }) {
           <input className="min-w-0 max-w-[35vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs" defaultValue={proj.current?.name} key={ready ? "r" : "n"} onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }} />
           <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
         </div>
-        <nav aria-label="Editor actions" className="grid h-[5.5rem] grid-cols-4 grid-rows-2 items-center gap-1 border-t border-border/60">
-          <IconBtn label="Add" onClick={() => openBottom("text")}><Plus /></IconBtn>
-          <IconBtn label="Save" onClick={() => setExportOpen((v) => !v)}><Save /></IconBtn>
-          <IconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></IconBtn>
-          <IconBtn label="Share" active={shareOpen} onClick={() => setShareOpen((v) => !v)}><Share2 /></IconBtn>
-          <IconBtn label="Zoom to 100%" onClick={() => applyZoom(1)}><Scan /></IconBtn>
-          <IconBtn label="Grid guides" active={snapAlign} onClick={() => setSnapAlign((v) => !v)}><Grid2X2 /></IconBtn>
-          <IconBtn label="Options" active={optionsOpen} onClick={() => setOptionsOpen((v) => !v)}><Settings2 /></IconBtn>
-          <IconBtn label="Layers" onClick={() => { setBottomMode("elements"); openTab("layers"); }}><Layers /></IconBtn>
+        <nav aria-label="Editor actions" className="grid h-[5.5rem] grid-cols-4 grid-rows-2 gap-1 border-t border-border/70 bg-muted/20 px-1.5 py-1">
+          <NavIconBtn label="Add" active={panelOpen && bottomMode === "text"} onClick={() => openBottom("text")}><Plus /></NavIconBtn>
+          <NavIconBtn label="Save" active={exportOpen} onClick={() => setExportOpen((v) => !v)}><Save /></NavIconBtn>
+          <NavIconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></NavIconBtn>
+          <NavIconBtn label="Share" active={shareOpen} onClick={() => setShareOpen((v) => !v)}><Share2 /></NavIconBtn>
+          <NavIconBtn label="Zoom to 100%" onClick={() => applyZoom(1)}><Scan /></NavIconBtn>
+          <NavIconBtn label="Grid guides" active={snapAlign} onClick={() => setSnapAlign((v) => !v)}><Grid2X2 /></NavIconBtn>
+          <NavIconBtn label="Options" active={optionsOpen} onClick={() => setOptionsOpen((v) => !v)}><Settings2 /></NavIconBtn>
+          <NavIconBtn label="Layers" active={tab === "layers"} onClick={() => { setBottomMode("elements"); openTab("layers"); }}><Layers /></NavIconBtn>
         </nav>
-        {optionsOpen && <div className="absolute right-2 top-[6.5rem] z-50 grid w-60 gap-1 rounded-xl border border-border bg-popover p-2 shadow-xl">{topOptions.map(([label, on]) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { on(); setOptionsOpen(false); }}>{label}</button>)}</div>}
-        {shareOpen && <div className="absolute right-2 top-[6.5rem] z-50 grid w-52 gap-1 rounded-xl border border-border bg-popover p-2 shadow-xl">{["Facebook", "Twitter", "Google", "Whatsapp", "Instagram", "Save to gallery"].map((label) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { shareTo(label); setShareOpen(false); }}>{label}</button>)}</div>}
-        {exportOpen && <div className="absolute right-2 top-[6.5rem] z-50 w-52 rounded-xl border border-border bg-popover p-1 shadow-xl">{([["png", "Save as image"], ["tpng", "Transparent PNG"], ["jpg", "JPG"], ["pdf", "PDF"], ["project", "Save as project"]] as const).map(([k, l]) => <button key={k} onClick={() => k === "project" ? void persist() : void exportAs(k)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">{l}</button>)}</div>}
+        {optionsOpen && <div className="absolute right-2 top-[8.5rem] z-50 grid w-60 gap-1 rounded-xl border border-border/70 bg-popover/95 p-2 shadow-2xl backdrop-blur">{topOptions.map(([label, on]) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted" onClick={() => { on(); setOptionsOpen(false); }}>{label}</button>)}</div>}
+        {shareOpen && <div className="absolute right-2 top-[8.5rem] z-50 grid w-52 gap-1 rounded-xl border border-border/70 bg-popover/95 p-2 shadow-2xl backdrop-blur">{["Facebook", "Twitter", "Google", "Whatsapp", "Instagram", "Save to gallery"].map((label) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted" onClick={() => { shareTo(label); setShareOpen(false); }}>{label}</button>)}</div>}
+        {exportOpen && <div className="absolute right-2 top-[8.5rem] z-50 w-52 rounded-xl border border-border/70 bg-popover/95 p-1.5 shadow-2xl backdrop-blur">{([["png", "Save as image"], ["tpng", "Transparent PNG"], ["jpg", "JPG"], ["pdf", "PDF"], ["project", "Save as project"]] as const).map(([k, l]) => <button key={k} onClick={() => k === "project" ? void persist() : void exportAs(k)} className="block w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted">{l}</button>)}</div>}
       </header>
 
       {aiOpen && <section className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"><div className="flex items-center gap-2 border-b border-border p-3"><Sparkles className="h-4 w-4 text-primary" /><h2 className="font-semibold">Design assistant</h2><button className="ml-auto rounded p-1 hover:bg-muted" onClick={() => setAiOpen(false)} aria-label="Close assistant"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{aiMessages.length === 0 && <p className="text-xs text-muted-foreground">Ask me to add, edit, move, arrange, or style objects on your canvas.</p>}{aiMessages.map((message, i) => <div key={i} className={`rounded-lg p-2 text-sm ${message.role === "user" ? "ml-5 bg-primary/15" : "mr-5 bg-muted"}`}>{message.text}</div>)}{aiBusy && <p className="text-xs text-muted-foreground">Working on your design…</p>}</div><form className="flex gap-2 border-t border-border p-3" onSubmit={(e) => { e.preventDefault(); void runAssistant(); }}><input className="field min-w-0 flex-1" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Try: add a blue circle" disabled={aiBusy} /><button className="rounded-lg bg-primary p-2 text-primary-foreground disabled:opacity-50" disabled={aiBusy || !aiPrompt.trim()} aria-label="Send command"><Send className="h-4 w-4" /></button></form></section>}
@@ -713,8 +713,8 @@ export function Editor({ id }: { id: string }) {
           </div>
         </aside>
 
-        <nav aria-label="Primary design tools" className="fixed inset-x-0 bottom-0 z-50 grid h-16 grid-cols-4 border-t border-border bg-card/95 px-2 shadow-2xl backdrop-blur">
-          {bottomTools.map((tool) => <button key={tool.label} disabled={!ready} title={tool.label} aria-label={tool.label} onClick={() => openBottom(tool.mode)} className={`flex items-center justify-center [&_svg]:h-6 [&_svg]:w-6 ${bottomMode === tool.mode ? "text-primary" : "text-muted-foreground"}`}>{tool.icon}</button>)}
+        <nav aria-label="Primary design tools" className="fixed inset-x-0 bottom-0 z-50 grid h-16 grid-cols-4 gap-1 border-t border-border/80 bg-card/95 px-2 py-1.5 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur-xl">
+          {bottomTools.map((tool) => <button key={tool.label} disabled={!ready} title={tool.label} aria-label={tool.label} onClick={() => openBottom(tool.mode)} className={`relative flex items-center justify-center rounded-xl transition-all duration-200 active:scale-95 disabled:opacity-40 [&_svg]:h-6 [&_svg]:w-6 ${bottomMode === tool.mode ? "bg-primary/12 text-primary shadow-sm" : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}>{bottomMode === tool.mode && <span className="absolute top-0.5 h-1 w-6 rounded-full bg-primary" />}{tool.icon}</button>)}
         </nav>
       </div>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
@@ -751,6 +751,15 @@ function IconBtn({ children, label, onClick, disabled, active, className = "" }:
     <button title={label} aria-label={label} disabled={disabled} onClick={onClick}
       className={`inline-flex items-center justify-center rounded-md p-1.5 transition hover:bg-muted disabled:opacity-30 [&_svg]:h-4 [&_svg]:w-4 ${active ? "bg-primary text-primary-foreground hover:bg-primary" : ""} ${className}`}>
       {children}
+    </button>
+  );
+}
+function NavIconBtn({ children, label, onClick, disabled, active }: { children: ReactNode; label: string; onClick: () => void; disabled?: boolean; active?: boolean }) {
+  return (
+    <button title={label} aria-label={label} disabled={disabled} onClick={onClick}
+      className={`group relative flex min-h-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 [&_svg]:h-[1.15rem] [&_svg]:w-[1.15rem] ${active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-card hover:text-foreground"}`}>
+      {children}
+      <span className="pointer-events-none absolute bottom-0.5 left-1/2 h-0.5 w-0 -translate-x-1/2 rounded-full bg-primary-foreground/80 transition-all group-hover:w-4" />
     </button>
   );
 }
