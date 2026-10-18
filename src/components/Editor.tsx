@@ -79,6 +79,9 @@ export function Editor({ id }: { id: string }) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
+  const [layerOpen, setLayerOpen] = useState(false);
+  const [layerSelection, setLayerSelection] = useState<Obj[]>([]);
+  const [infoPanel, setInfoPanel] = useState<"about" | "contact" | null>(null);
   const askAssistant = useServerFn(askGeminiDesignAssistant);
 
   const W = () => proj.current?.width ?? 1;
@@ -213,13 +216,13 @@ export function Editor({ id }: { id: string }) {
         target.setCoords(); setAlignmentGuide(guide); if (guide) window.setTimeout(() => setAlignmentGuide(null), 200);
       });
       c.on("mouse:down", ({ target }: { target?: Obj }) => {
-        if (!target) { tapRef.current = { target: null, count: 0 }; setBottomMode("background"); setSelectedTool(null); setPanelOpen(true); return; }
+        if (!target) { tapRef.current = { target: null, count: 0 }; return; }
         if (tapRef.current.target === target) tapRef.current.count += 1;
         else tapRef.current = { target, count: 1 };
         if (tapRef.current.count < 3) closeVirtualKeyboard();
-        if (tapRef.current.count === 1 && ["textbox", "i-text", "text"].includes(target.type)) { setPanelOpen(false); }
-        setPanelOpen(tapRef.current.count >= 2);
-        if (tapRef.current.count >= 2) { setBottomMode(["textbox", "i-text", "text"].includes(target.type) ? "text" : "elements"); setSelectedTool(null); }
+        setPanelOpen(true);
+        setBottomMode(["textbox", "i-text", "text"].includes(target.type) ? "text" : "elements");
+        setSelectedTool(null);
         force();
       });
       c.on("mouse:dblclick", ({ target }: { target?: Obj }) => {
@@ -310,6 +313,8 @@ export function Editor({ id }: { id: string }) {
   };
   const groupSelected = () => { const c = fc.current, selection = c?.getActiveObject(); if (!c || !selection || selection.type !== "activeSelection") return; selection.toGroup?.(); c.requestRenderAll(); commit(); };
   const ungroupSelected = () => { const c = fc.current, group = c?.getActiveObject(); if (!c || !group || group.type !== "group") return; group.toActiveSelection?.(); c.requestRenderAll(); commit(); };
+  const deleteLayerObject = (object: Obj) => { const c = fc.current; if (!c) return; c.setActiveObject(object); del(); setLayerSelection((items) => items.filter((item) => item !== object)); };
+  const mergeLayerObjects = () => { const c = fc.current, f = fab.current; if (!c || !f || layerSelection.length < 2) return; c.setActiveObject(new f.ActiveSelection(layerSelection, { canvas: c })); groupSelected(); setLayerSelection([]); };
 
   const previewImage = (file: File | undefined, target: "element" | "background") => {
     if (!file) return;
@@ -607,13 +612,13 @@ export function Editor({ id }: { id: string }) {
   const requestHome = (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setSaveHomeOpen(true); };
   const saveProjectAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
   const exportAndHome = async (kind: "png" | "jpg" | "pdf") => { await exportAs(kind); setSaveHomeOpen(false); nav({ to: "/" }); };
-  const openBottom = (mode: "text" | "elements" | "background" | "filters") => { setBottomMode(mode); setSelectedTool(null); setPanelOpen(true); if (mode === "background") setTab("bg"); if (mode === "filters") setTab("edit"); if (mode === "elements") setTab("shapes"); };
+  const openBottom = (mode: "text" | "elements" | "background" | "filters") => { setLayerOpen(false); setLayerSelection([]); setBottomMode(mode); setSelectedTool(null); setPanelOpen(true); if (mode === "background") setTab("bg"); if (mode === "filters") setTab("edit"); if (mode === "elements") setTab("shapes"); };
   const shareDesign = async () => { if (navigator.share) { await navigator.share({ title: proj.current?.name ?? "Gridora design", text: "A design made in Gridora Studio" }).catch(() => undefined); } else setExportOpen(true); };
   const shareTo = (target: string) => { const url = encodeURIComponent(window.location.href); const text = encodeURIComponent(proj.current?.name ?? "My Gridora design"); const links: Record<string, string> = { Facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`, Twitter: `https://twitter.com/intent/tweet?text=${text}&url=${url}`, Google: `https://www.google.com/search?q=${text}`, Whatsapp: `https://wa.me/?text=${text}%20${url}`, Instagram: "https://www.instagram.com/" }; if (target === "Save to gallery") { void exportAs("png"); return; } window.open(links[target], "_blank", "noopener,noreferrer"); };
   const topOptions = [
     ["Use image from gallery", () => fileRef.current?.click()], ["Fullscreen", () => document.documentElement.requestFullscreen?.()],
     ["Use image from camera", () => { fileRef.current?.setAttribute("capture", "environment"); fileRef.current?.click(); }], ["Image size", () => openBottom("background")],
-    ["Contact us", () => { window.location.href = "mailto:contact@sfchlimited.com"; }], ["Tutorials", () => { window.open("#tutorials", "_self"); }], ["About", () => { window.open("/", "_self"); }], ["Exit", () => setSaveHomeOpen(true)],
+    ["Contact us", () => setInfoPanel("contact")], ["Tutorials", () => { window.open("#tutorials", "_self"); }], ["About", () => setInfoPanel("about")], ["Exit", () => setSaveHomeOpen(true)],
   ] as const;
   const bottomTools: { icon: ReactNode; label: string; mode: "text" | "elements" | "background" | "filters" }[] = [
     { icon: <Type />, label: "Text", mode: "text" }, { icon: <Shapes />, label: "Elements", mode: "elements" }, { icon: <PaintBucket />, label: "Background", mode: "background" }, { icon: <Sparkles />, label: "Filters", mode: "filters" },
@@ -655,7 +660,7 @@ export function Editor({ id }: { id: string }) {
           <NavIconBtn label="Zoom to 100%" onClick={() => applyZoom(1)}><Scan /></NavIconBtn>
           <NavIconBtn label="Grid guides" active={snapAlign} onClick={() => setSnapAlign((v) => !v)}><Grid2X2 /></NavIconBtn>
           <NavIconBtn label="Options" active={optionsOpen} onClick={() => setOptionsOpen((v) => !v)}><Settings2 /></NavIconBtn>
-          <NavIconBtn label="Layers" active={tab === "layers"} onClick={() => { setBottomMode("elements"); openTab("layers"); }}><Layers /></NavIconBtn>
+          <NavIconBtn label="Layers" active={layerOpen} onClick={() => { setLayerOpen(true); setLayerSelection([]); setSelectedTool(null); setPanelOpen(true); }}><Layers /></NavIconBtn>
         </nav>
         {optionsOpen && <div className="absolute right-2 top-[8.5rem] z-50 grid w-60 gap-1 rounded-xl border border-border/70 bg-popover/95 p-2 shadow-2xl backdrop-blur">{topOptions.map(([label, on]) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted" onClick={() => { on(); setOptionsOpen(false); }}>{label}</button>)}</div>}
         {shareOpen && <div className="absolute right-2 top-[8.5rem] z-50 grid w-52 gap-1 rounded-xl border border-border/70 bg-popover/95 p-2 shadow-2xl backdrop-blur">{["Facebook", "Twitter", "Google", "Whatsapp", "Instagram", "Save to gallery"].map((label) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted" onClick={() => { shareTo(label); setShareOpen(false); }}>{label}</button>)}</div>}
@@ -663,6 +668,7 @@ export function Editor({ id }: { id: string }) {
       </header>
 
       {aiOpen && <section className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"><div className="flex items-center gap-2 border-b border-border p-3"><Sparkles className="h-4 w-4 text-primary" /><h2 className="font-semibold">Design assistant</h2><button className="ml-auto rounded p-1 hover:bg-muted" onClick={() => setAiOpen(false)} aria-label="Close assistant"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{aiMessages.length === 0 && <p className="text-xs text-muted-foreground">Ask me to add, edit, move, arrange, or style objects on your canvas.</p>}{aiMessages.map((message, i) => <div key={i} className={`rounded-lg p-2 text-sm ${message.role === "user" ? "ml-5 bg-primary/15" : "mr-5 bg-muted"}`}>{message.text}</div>)}{aiBusy && <p className="text-xs text-muted-foreground">Working on your design…</p>}</div><form className="flex gap-2 border-t border-border p-3" onSubmit={(e) => { e.preventDefault(); void runAssistant(); }}><input className="field min-w-0 flex-1" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Try: add a blue circle" disabled={aiBusy} /><button className="rounded-lg bg-primary p-2 text-primary-foreground disabled:opacity-50" disabled={aiBusy || !aiPrompt.trim()} aria-label="Send command"><Send className="h-4 w-4" /></button></form></section>}
+      {infoPanel && <section role="dialog" aria-modal="true" className="fixed inset-x-4 top-1/2 z-[60] max-h-[80vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl sm:left-1/2 sm:w-[min(92vw,30rem)] sm:-translate-x-1/2"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">SFCH Limited</p><h2 className="mt-1 text-xl font-semibold">{infoPanel === "about" ? "About us" : "Contact us"}</h2></div><button className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close information" onClick={() => setInfoPanel(null)}><X className="h-5 w-5" /></button></div>{infoPanel === "about" ? <p className="mt-5 text-sm leading-7 text-muted-foreground">SFCH Limited is a creative company passionate about designing and creating websites.</p> : <div className="mt-5 space-y-3 text-sm"><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="mailto:sfchlimited@gmail.com">sfchlimited@gmail.com</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="mailto:sfchlmtdhq@gmail.com">sfchlmtdhq@gmail.com</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="tel:07077579322">07077579322</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="https://instagram.com/sfch.limited" target="_blank" rel="noreferrer">@sfch.limited</a></div>}</section>}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* canvas area */}
         <div className="relative min-h-0 min-w-0 flex-1">
@@ -688,6 +694,10 @@ export function Editor({ id }: { id: string }) {
               <IconBtn label="Delete" className="text-destructive" onClick={del}><Trash2 /></IconBtn>
             </div>
           )}
+          {snapAlign && canvasBounds && wrapBounds && <div className="pointer-events-none absolute z-10" style={{ left: canvasBounds.left - wrapBounds.left, top: canvasBounds.top - wrapBounds.top, width: canvasBounds.width, height: canvasBounds.height }}>
+            {[25, 50, 75].map((percent) => <span key={`v-${percent}`} className="absolute top-0 h-full w-px bg-emerald-500/75 shadow-[0_0_3px_rgba(16,185,129,0.65)]" style={{ left: `${percent}%` }} />)}
+            {[25, 50, 75].map((percent) => <span key={`h-${percent}`} className="absolute left-0 h-px w-full bg-emerald-500/75 shadow-[0_0_3px_rgba(16,185,129,0.65)]" style={{ top: `${percent}%` }} />)}
+          </div>}
           {alignmentGuide && canvasBounds && wrapBounds && <div className="pointer-events-none absolute z-20 bg-primary/70" style={alignmentGuide.axis === "x" ? { left: canvasBounds.left - wrapBounds.left + alignmentGuide.value * zoom - 1, top: canvasBounds.top - wrapBounds.top, height: canvasBounds.height, width: 2 } : { left: canvasBounds.left - wrapBounds.left, top: canvasBounds.top - wrapBounds.top + alignmentGuide.value * zoom - 1, width: canvasBounds.width, height: 2 }} />}
           {/* zoom controls */}
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card/95 px-2 py-1 shadow-lg backdrop-blur">
@@ -700,16 +710,16 @@ export function Editor({ id }: { id: string }) {
           </div>
         </div>
 
+        {layerOpen && <div className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[1px]" aria-hidden="true" />}
         {/* side panel */}
         <aside className={`${panelOpen ? "grid" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[30vh] grid-rows-[auto_minmax(0,1fr)] rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}>
           <div className="flex min-h-0 items-center border-b border-border">
-            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-contain p-2">
+            {layerOpen ? <div className="flex w-full items-center justify-between px-4 py-3"><div><h2 className="text-sm font-semibold">Layers</h2><p className="text-[11px] text-muted-foreground">Select two elements to merge them.</p></div><button className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Cancel layers" title="Cancel" onClick={() => { setLayerOpen(false); setLayerSelection([]); setPanelOpen(false); }}><X className="h-5 w-5" /></button></div> : <><div className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-contain p-2">
               {toolRows[bottomMode].map((tool) => <button key={tool} title={tool} aria-label={tool} onClick={() => runTool(tool)} className={`flex w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[10px] ${selectedTool === tool ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted"}`}><span className="[&_svg]:h-5 [&_svg]:w-5">{toolIcon(tool)}</span><span className="truncate">{tool}</span></button>)}
-            </div>
-            <button className="mr-2 rounded p-1" aria-label="Close tools" onClick={() => { setPanelOpen(false); setSelectedTool(null); }}><X className="h-4 w-4" /></button>
+            </div><button className="mr-2 rounded p-1" aria-label="Close tools" onClick={() => { setPanelOpen(false); setSelectedTool(null); }}><X className="h-4 w-4" /></button></>}
           </div>
           <div className="min-h-0 overflow-y-auto p-4">
-            {selectedTool && ready && fab.current && (selectedTool === "Shapes" ? <Grid>{["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => <Tile key={k} onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>)}</Grid> : selectedTool === "Stickers" ? <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid> : bottomMode === "background" && ["Color", "Transparent", "Image size", "Image", "From gallery", "From camera"].includes(selectedTool) ? <CanvasPanel c={fc.current} f={fab.current} proj={proj.current!} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} /> : <EditorToolDetails tool={bottomMode === "filters" ? `filter:${selectedTool === "Noise" ? "grain" : selectedTool === "Rotate" ? "rotation" : selectedTool.toLowerCase()}` : selectedTool} o={o} f={fab.current} c={fc.current} width={W()} height={H()} commit={commit} erase={(mode, color, tolerance) => { void eraseImageBackground(mode, color, tolerance); }} mask={maskImage} />)}
+            {layerOpen ? <div className="space-y-2"><div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">{objects.length} element{objects.length === 1 ? "" : "s"}</span><Button size="sm" variant="outline" disabled={layerSelection.length < 2} onClick={mergeLayerObjects}>Merge selected</Button></div>{objects.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">No layers yet.</p>}{objects.map((x, i) => <div key={i} className={`flex items-center gap-2 rounded-xl border p-2 ${layerSelection.includes(x) ? "border-primary bg-primary/10" : "border-border bg-background/40"}`}><input type="checkbox" aria-label={`Select ${x.name || x.type} for merge`} checked={layerSelection.includes(x)} onChange={() => setLayerSelection((items) => items.includes(x) ? items.filter((item) => item !== x) : [...items, x])} /><button className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => { if (x.visible && !x.lockedLayer) { fc.current.setActiveObject(x); fc.current.requestRenderAll(); force(); } }}>{x.name || x.type}{x.text ? `: ${x.text.slice(0, 18)}` : ""}</button><IconBtn label={x.visible ? "Hide" : "Unhide"} onClick={() => { x.visible = !x.visible; fc.current.requestRenderAll(); commit(); }}>{x.visible ? <Eye /> : <EyeOff />}</IconBtn><IconBtn label={x.lockedLayer ? "Unlock" : "Lock"} onClick={() => { x.lockedLayer = !x.lockedLayer; commit(); }}>{x.lockedLayer ? <Lock /> : <Unlock />}</IconBtn><IconBtn label="Delete" className="text-destructive" onClick={() => deleteLayerObject(x)}><Trash2 /></IconBtn></div>)}</div> : selectedTool && ready && fab.current && (selectedTool === "Shapes" ? <Grid>{["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => <Tile key={k} onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>)}</Grid> : selectedTool === "Stickers" ? <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid> : bottomMode === "background" && ["Color", "Transparent", "Image size", "Image", "From gallery", "From camera"].includes(selectedTool) ? <CanvasPanel c={fc.current} f={fab.current} proj={proj.current!} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} /> : <EditorToolDetails tool={bottomMode === "filters" ? `filter:${selectedTool === "Noise" ? "grain" : selectedTool === "Rotate" ? "rotation" : selectedTool.toLowerCase()}` : selectedTool} o={o} f={fab.current} c={fc.current} width={W()} height={H()} commit={commit} erase={(mode, color, tolerance) => { void eraseImageBackground(mode, color, tolerance); }} mask={maskImage} />)}
           </div>
         </aside>
 
