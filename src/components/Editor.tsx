@@ -701,16 +701,15 @@ export function Editor({ id }: { id: string }) {
         </div>
 
         {/* side panel */}
-        <aside className={`${panelOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[30vh] max-h-none flex-col rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}>
-          <div className="flex min-h-0 shrink-0 items-center border-b border-border">
+        <aside className={`${panelOpen ? "grid" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[30vh] grid-rows-[auto_minmax(0,1fr)] rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}>
+          <div className="flex min-h-0 items-center border-b border-border">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-contain p-2">
               {toolRows[bottomMode].map((tool) => <button key={tool} title={tool} aria-label={tool} onClick={() => runTool(tool)} className={`flex w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[10px] ${selectedTool === tool ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted"}`}><span className="[&_svg]:h-5 [&_svg]:w-5">{toolIcon(tool)}</span><span className="truncate">{tool}</span></button>)}
             </div>
             <button className="mr-2 rounded p-1" aria-label="Close tools" onClick={() => { setPanelOpen(false); setSelectedTool(null); }}><X className="h-4 w-4" /></button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="min-h-0 overflow-y-auto p-4">
             {selectedTool && ready && fab.current && (selectedTool === "Shapes" ? <Grid>{["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => <Tile key={k} onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>)}</Grid> : selectedTool === "Stickers" ? <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid> : bottomMode === "background" && ["Color", "Transparent", "Image size", "Image", "From gallery", "From camera"].includes(selectedTool) ? <CanvasPanel c={fc.current} f={fab.current} proj={proj.current!} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} /> : <EditorToolDetails tool={bottomMode === "filters" ? `filter:${selectedTool === "Noise" ? "grain" : selectedTool === "Rotate" ? "rotation" : selectedTool.toLowerCase()}` : selectedTool} o={o} f={fab.current} c={fc.current} width={W()} height={H()} commit={commit} erase={(mode, color, tolerance) => { void eraseImageBackground(mode, color, tolerance); }} mask={maskImage} />)}
-            {!selectedTool && <p className="text-center text-sm text-muted-foreground">Choose a tool above. The tool details stay here while you scroll vertically.</p>}
           </div>
         </aside>
 
