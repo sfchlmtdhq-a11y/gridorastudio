@@ -15,3 +15,4 @@
 - Font selection uses the dedicated FontPicker with semantic sample tones; this keeps the picker consistent without changing canvas text colors.
 
 - The assistant validates shared action schemas and mutates the existing Fabric canvas inside one history transaction; no parallel canvas is created.
+- Snapshot branching is centralized in editor-history and tested independently to preserve redo after restoring an unchanged design.

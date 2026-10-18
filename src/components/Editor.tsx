@@ -16,6 +16,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 import { askGeminiDesignAssistant, type GeminiAction } from "@/lib/gemini";
 import { DesignAssistant, type AssistantMessage } from "./DesignAssistant";
 import { responseSchema } from "@/lib/design-actions";
+import { recordSnapshot } from "@/lib/editor-history";
 import { EditorToolDetails } from "./EditorToolDetails";
 
 type Fab = typeof import("fabric");
@@ -152,11 +153,7 @@ export function Editor({ id }: { id: string }) {
     const c = fc.current, h = hist.current;
     if (!c || h.lock) return;
     const s = JSON.stringify(c.toObject(PROPS));
-    if (h.stack[h.i] === s) return;
-    h.stack = h.stack.slice(0, h.i + 1);
-    h.stack.push(s);
-    if (h.stack.length > 60) h.stack.shift();
-    h.i = h.stack.length - 1;
+    if (!recordSnapshot(h, s)) return;
     force();
   }, []);
 
