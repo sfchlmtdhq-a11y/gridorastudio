@@ -23,7 +23,7 @@ export const askGeminiDesignAssistant = createServerFn({ method: "POST" })
     const apiKey = process.env["GEMINI_API_KEY"];
     if (!apiKey) throw new Error("The design assistant is not configured yet.");
     const modelListResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
-    if (!modelListResponse.ok) throw new Error("Gemini rejected the configured API key. Check the Gemini API key in Vercel.");
+    if (!modelListResponse.ok) throw new Error("Gemini could not access the configured account. Check the Gemini configuration in project settings.");
     const modelList = await modelListResponse.json() as { models?: Array<{ baseModelId?: string; name?: string; supportedGenerationMethods?: string[] }> };
     const available = new Set((modelList.models ?? []).filter((item) => item.supportedGenerationMethods?.includes("generateContent")).flatMap((item) => [item.baseModelId, item.name?.replace(/^models\//, "")]).filter((item): item is string => Boolean(item)));
     const requested = process.env["GEMINI_MODEL"];
