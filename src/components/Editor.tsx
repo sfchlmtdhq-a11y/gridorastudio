@@ -84,6 +84,7 @@ export function Editor({ id }: { id: string }) {
   const [infoPanel, setInfoPanel] = useState<"about" | "contact" | null>(null);
   const [drawingActive, setDrawingActive] = useState(false);
   const [addPickerView, setAddPickerView] = useState<"menu" | "icons">("menu");
+  const [drawSmoothness, setDrawSmoothness] = useState(70);
   const askAssistant = useServerFn(askGeminiDesignAssistant);
 
   const W = () => proj.current?.width ?? 1;
@@ -96,6 +97,7 @@ export function Editor({ id }: { id: string }) {
       c.freeDrawingBrush = new f.PencilBrush(c);
       c.freeDrawingBrush.width = Math.max(2, Math.round(3 / zoomRef.current));
       c.freeDrawingBrush.color = "#16a34a";
+      c.freeDrawingBrush.decimate = Math.max(0.1, (100 - drawSmoothness) / 100);
     }
     setDrawingActive(enabled);
     c.requestRenderAll();
@@ -206,6 +208,7 @@ export function Editor({ id }: { id: string }) {
       c.on("object:added", onChange);
       c.on("object:removed", onChange);
       c.on("text:changed", onChange);
+      c.on("path:created", ({ path }: { path?: Obj }) => { if (!path) return; path.set({ name: "Freehand drawing", drawSmoothness }); c.setActiveObject(path); setDrawingMode(false); setBottomMode("elements"); setSelectedTool("Draw"); setPanelOpen(true); force(); });
       const onSel = () => { const selected = c.getActiveObject(); if (selected?.type === "image") setTab((current) => current === "fill" ? "position" : current); force(); };
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
@@ -236,7 +239,7 @@ export function Editor({ id }: { id: string }) {
         if (tapRef.current.count < 3) closeVirtualKeyboard();
         setPanelOpen(true);
         setBottomMode(["textbox", "i-text", "text"].includes(target.type) ? "text" : "elements");
-        setSelectedTool(null);
+        setSelectedTool(target.type === "path" ? "Draw" : null);
         force();
       });
       c.on("mouse:dblclick", ({ target }: { target?: Obj }) => {
@@ -647,6 +650,17 @@ export function Editor({ id }: { id: string }) {
     else if (tool === "Background") openTab("bg");
     else if (tool === "Image size") openBottom("background");
   };
+  const updateDrawing = (property: "color" | "size" | "blur" | "smoothness", value: string | number) => {
+    const c = fc.current, object = active(), f = fab.current;
+    if (!c || !object || object.type !== "path") return;
+    snapshot();
+    if (property === "color") object.set({ stroke: value });
+    if (property === "size") object.set({ strokeWidth: Number(value) });
+    if (property === "blur" && f) object.set({ shadow: Number(value) > 0 ? new f.Shadow({ color: "rgba(0,0,0,0.45)", blur: Number(value), offsetX: 0, offsetY: 0 }) : undefined });
+    if (property === "smoothness") { setDrawSmoothness(Number(value)); object.set({ drawSmoothness: Number(value), strokeLineCap: Number(value) > 50 ? "round" : "butt", strokeLineJoin: Number(value) > 50 ? "round" : "miter" }); }
+    c.requestRenderAll();
+    commit();
+  };
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden">
@@ -725,7 +739,7 @@ export function Editor({ id }: { id: string }) {
             </div><button className="mr-2 rounded p-1" aria-label="Close tools" onClick={() => { setPanelOpen(false); setSelectedTool(null); }}><X className="h-4 w-4" /></button></>}
           </div>
           <div className="min-h-0 overflow-y-auto p-4">
-            {layerOpen ? <div className="space-y-2"><div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">{objects.length} element{objects.length === 1 ? "" : "s"}</span><Button size="sm" variant="outline" disabled={layerSelection.length < 2} onClick={mergeLayerObjects}>Merge selected</Button></div>{objects.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">No layers yet.</p>}{objects.map((x, i) => <div key={i} className={`flex items-center gap-2 rounded-xl border p-2 ${layerSelection.includes(x) ? "border-primary bg-primary/10" : "border-border bg-background/40"}`}><input type="checkbox" aria-label={`Select ${x.name || x.type} for merge`} checked={layerSelection.includes(x)} onChange={() => setLayerSelection((items) => items.includes(x) ? items.filter((item) => item !== x) : [...items, x])} /><button className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => { if (x.visible && !x.lockedLayer) { fc.current.setActiveObject(x); fc.current.requestRenderAll(); force(); } }}>{x.name || x.type}{x.text ? `: ${x.text.slice(0, 18)}` : ""}</button><IconBtn label={x.visible ? "Hide" : "Unhide"} onClick={() => { x.visible = !x.visible; fc.current.requestRenderAll(); commit(); }}>{x.visible ? <Eye /> : <EyeOff />}</IconBtn><IconBtn label={x.lockedLayer ? "Unlock" : "Lock"} onClick={() => { x.lockedLayer = !x.lockedLayer; commit(); }}>{x.lockedLayer ? <Lock /> : <Unlock />}</IconBtn><IconBtn label="Delete" className="text-destructive" onClick={() => deleteLayerObject(x)}><Trash2 /></IconBtn></div>)}</div> : selectedTool && ready && fab.current && (selectedTool === "Shapes" ? <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">{["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => <Tile key={k} className="h-14 aspect-auto" onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>)}</div> : selectedTool === "Stickers" ? <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid> : bottomMode === "background" && ["Color", "Transparent", "Image size", "Image", "From gallery", "From camera"].includes(selectedTool) ? <CanvasPanel c={fc.current} f={fab.current} proj={proj.current!} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} /> : <EditorToolDetails tool={bottomMode === "filters" ? `filter:${selectedTool === "Noise" ? "grain" : selectedTool === "Rotate" ? "rotation" : selectedTool.toLowerCase()}` : selectedTool} o={o} f={fab.current} c={fc.current} width={W()} height={H()} commit={commit} erase={(mode, color, tolerance) => { void eraseImageBackground(mode, color, tolerance); }} mask={maskImage} />)}
+            {layerOpen ? <div className="space-y-2"><div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">{objects.length} element{objects.length === 1 ? "" : "s"}</span><Button size="sm" variant="outline" disabled={layerSelection.length < 2} onClick={mergeLayerObjects}>Merge selected</Button></div>{objects.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">No layers yet.</p>}{objects.map((x, i) => <div key={i} className={`flex items-center gap-2 rounded-xl border p-2 ${layerSelection.includes(x) ? "border-primary bg-primary/10" : "border-border bg-background/40"}`}><input type="checkbox" aria-label={`Select ${x.name || x.type} for merge`} checked={layerSelection.includes(x)} onChange={() => setLayerSelection((items) => items.includes(x) ? items.filter((item) => item !== x) : [...items, x])} /><button className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => { if (x.visible && !x.lockedLayer) { fc.current.setActiveObject(x); fc.current.requestRenderAll(); force(); } }}>{x.name || x.type}{x.text ? `: ${x.text.slice(0, 18)}` : ""}</button><IconBtn label={x.visible ? "Hide" : "Unhide"} onClick={() => { x.visible = !x.visible; fc.current.requestRenderAll(); commit(); }}>{x.visible ? <Eye /> : <EyeOff />}</IconBtn><IconBtn label={x.lockedLayer ? "Unlock" : "Lock"} onClick={() => { x.lockedLayer = !x.lockedLayer; commit(); }}>{x.lockedLayer ? <Lock /> : <Unlock />}</IconBtn><IconBtn label="Delete" className="text-destructive" onClick={() => deleteLayerObject(x)}><Trash2 /></IconBtn></div>)}</div> : selectedTool && ready && fab.current && (selectedTool === "Draw" ? <DrawingDetails o={o} onChange={updateDrawing} onContinue={() => setDrawingMode(true)} /> : selectedTool === "Shapes" ? <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">{["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => <Tile key={k} className="h-14 aspect-auto" onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[10px] capitalize">{k}</span></Tile>)}</div> : selectedTool === "Stickers" ? <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid> : bottomMode === "background" && ["Color", "Transparent", "Image size", "Image", "From gallery", "From camera"].includes(selectedTool) ? <CanvasPanel c={fc.current} f={fab.current} proj={proj.current!} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} /> : <EditorToolDetails tool={bottomMode === "filters" ? `filter:${selectedTool === "Noise" ? "grain" : selectedTool === "Rotate" ? "rotation" : selectedTool.toLowerCase()}` : selectedTool} o={o} f={fab.current} c={fc.current} width={W()} height={H()} commit={commit} erase={(mode, color, tolerance) => { void eraseImageBackground(mode, color, tolerance); }} mask={maskImage} />)}
           </div>
         </aside>
 
@@ -769,6 +783,13 @@ function IconBtn({ children, label, onClick, disabled, active, className = "" }:
       {children}
     </button>
   );
+}
+function DrawingDetails({ o, onChange, onContinue }: { o: Obj | null; onChange: (property: "color" | "size" | "blur" | "smoothness", value: string | number) => void; onContinue: () => void }) {
+  const color = typeof o?.stroke === "string" && o.stroke.startsWith("#") ? o.stroke : "#16a34a";
+  const size = Number(o?.strokeWidth ?? 3);
+  const blur = Number(o?.shadow?.blur ?? 0);
+  const smoothness = Number(o?.drawSmoothness ?? 70);
+  return <div className="mx-auto w-full max-w-xl space-y-4"><div className="flex items-center justify-between"><div><h3 className="font-semibold">Drawing tools</h3><p className="text-xs text-muted-foreground">Adjust the selected stroke or start a new one.</p></div><Button size="sm" variant="outline" onClick={onContinue}><Pencil className="mr-1 h-4 w-4" />Draw</Button></div><div className="grid gap-3 sm:grid-cols-2"><label className="flex items-center justify-between gap-3 rounded-xl border border-border p-3 text-sm"><span>Colour</span><input type="color" value={color} onChange={(e) => onChange("color", e.target.value)} className="h-9 w-14 cursor-pointer rounded border-0 bg-transparent p-0" /></label><label className="rounded-xl border border-border p-3 text-sm"><span className="flex justify-between"><span>Size</span><output>{size}px</output></span><input className="mt-2 w-full accent-primary" type="range" min="1" max="40" step="1" value={size} onChange={(e) => onChange("size", e.target.value)} /></label><label className="rounded-xl border border-border p-3 text-sm"><span className="flex justify-between"><span>Blurriness</span><output>{blur}</output></span><input className="mt-2 w-full accent-primary" type="range" min="0" max="30" step="1" value={blur} onChange={(e) => onChange("blur", e.target.value)} /></label><label className="rounded-xl border border-border p-3 text-sm"><span className="flex justify-between"><span>Smoothness</span><output>{smoothness}%</output></span><input className="mt-2 w-full accent-primary" type="range" min="0" max="100" step="1" value={smoothness} onChange={(e) => onChange("smoothness", e.target.value)} /></label></div>{!o && <p className="rounded-lg bg-muted p-3 text-center text-xs text-muted-foreground">Tap Draw, then drag on the canvas to create a stroke.</p>}</div>;
 }
 function NavIconBtn({ children, label, onClick, disabled, active }: { children: ReactNode; label: string; onClick: () => void; disabled?: boolean; active?: boolean }) {
   return (
