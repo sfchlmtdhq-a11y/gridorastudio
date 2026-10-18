@@ -83,6 +83,7 @@ export function Editor({ id }: { id: string }) {
   const [layerSelection, setLayerSelection] = useState<Obj[]>([]);
   const [infoPanel, setInfoPanel] = useState<"about" | "contact" | null>(null);
   const [drawingActive, setDrawingActive] = useState(false);
+  const [addPickerView, setAddPickerView] = useState<"menu" | "icons">("menu");
   const askAssistant = useServerFn(askGeminiDesignAssistant);
 
   const W = () => proj.current?.width ?? 1;
@@ -604,24 +605,12 @@ export function Editor({ id }: { id: string }) {
     add(new f.Textbox(new Date().toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }), { width: W() * 0.6, fontSize: Math.round(Math.min(W(), H()) / 18), fontFamily: "Manrope", fill: "#111111", textAlign: "center", name: "Date" }));
     setPanelOpen(true);
   };
-  const addTools: { icon: ReactNode; label: string; on: () => void }[] = [
-    { icon: <ImagePlus />, label: "Images", on: () => fileRef.current?.click() },
-    { icon: <Type />, label: "Text", on: addText },
-    { icon: <Bold />, label: "Heading", on: () => addTextPreset("heading") },
-    { icon: <Italic />, label: "Subheading", on: () => addTextPreset("subheading") },
-    { icon: <Type />, label: "Body text", on: () => addTextPreset("body") },
-    { icon: <Shapes />, label: "Shapes", on: () => openTab("shapes") },
-    { icon: <Star />, label: "Icons", on: () => openTab("icons") },
-    { icon: <CalendarDays />, label: "Date", on: addDate },
-  ];
-  const mainTools: { icon: ReactNode; label: string; on: () => void }[] = [
-    { icon: <Plus />, label: "Add", on: () => { setAdding(true); setPanelOpen(false); } },
-    { icon: <Layers />, label: "Layers", on: () => openTab("layers") },
-    { icon: <SlidersHorizontal />, label: "Edit", on: () => openTab("edit") },
-    { icon: <Scan />, label: "Transparent", on: () => setTransparentOpen(true) },
-  ];
-  const tools = adding ? addTools : mainTools;
-  const backTools = () => { setAdding(false); setPanelOpen(false); };
+  const closeAddPicker = () => { setAdding(false); setAddPickerView("menu"); };
+  const chooseAddText = () => { closeAddPicker(); addText(); };
+  const chooseAddImage = () => { closeAddPicker(); fileRef.current?.click(); };
+  const chooseAddDate = () => { closeAddPicker(); addDate(); };
+  const chooseAddBezier = () => { closeAddPicker(); setBottomMode("elements"); setSelectedTool("Bezier"); setPanelOpen(true); };
+  const chooseAddIcon = (name: string) => { closeAddPicker(); addIcon(name); };
   const requestHome = (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setSaveHomeOpen(true); };
   const saveProjectAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
   const exportAndHome = async (kind: "png" | "jpg" | "pdf") => { await exportAs(kind); setSaveHomeOpen(false); nav({ to: "/" }); };
@@ -668,7 +657,7 @@ export function Editor({ id }: { id: string }) {
           <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
         </div>
         <nav aria-label="Editor actions" className="grid h-[5.5rem] grid-cols-4 grid-rows-2 gap-1 border-t border-border/70 bg-muted/20 px-1.5 py-1">
-          <NavIconBtn label="Add" active={panelOpen && bottomMode === "text"} onClick={() => openBottom("text")}><Plus /></NavIconBtn>
+          <NavIconBtn label="Add" active={adding} onClick={() => { setAdding(true); setAddPickerView("menu"); setPanelOpen(false); }}><Plus /></NavIconBtn>
           <NavIconBtn label="Save" active={exportOpen} onClick={() => setExportOpen((v) => !v)}><Save /></NavIconBtn>
           <NavIconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></NavIconBtn>
           <NavIconBtn label="Share" active={shareOpen} onClick={() => setShareOpen((v) => !v)}><Share2 /></NavIconBtn>
@@ -681,6 +670,8 @@ export function Editor({ id }: { id: string }) {
         {shareOpen && <div className="absolute right-2 top-[8.5rem] z-50 grid w-52 gap-1 rounded-xl border border-border/70 bg-popover/95 p-2 shadow-2xl backdrop-blur">{["Facebook", "Twitter", "Google", "Whatsapp", "Instagram", "Save to gallery"].map((label) => <button key={label} className="rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted" onClick={() => { shareTo(label); setShareOpen(false); }}>{label}</button>)}</div>}
         {exportOpen && <div className="absolute right-2 top-[8.5rem] z-50 w-52 rounded-xl border border-border/70 bg-popover/95 p-1.5 shadow-2xl backdrop-blur">{([["png", "Save as image"], ["tpng", "Transparent PNG"], ["jpg", "JPG"], ["pdf", "PDF"], ["project", "Save as project"]] as const).map(([k, l]) => <button key={k} onClick={() => k === "project" ? void persist() : void exportAs(k)} className="block w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted">{l}</button>)}</div>}
       </header>
+
+      {adding && <><div className="fixed inset-0 z-[55] bg-black/40 backdrop-blur-md" aria-hidden="true" /><section role="dialog" aria-modal="true" aria-label="Add to design" className="fixed inset-x-5 top-1/2 z-[60] max-h-[78vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card/95 p-3 shadow-2xl backdrop-blur-xl sm:left-1/2 sm:w-[min(92vw,24rem)] sm:-translate-x-1/2"><div className="flex items-center justify-between border-b border-border px-2 pb-3"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Add to design</p><h2 className="mt-1 text-lg font-semibold">{addPickerView === "icons" ? "Choose an icon" : "What would you like to add?"}</h2></div><button className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Cancel add" title="Cancel" onClick={closeAddPicker}><X className="h-5 w-5" /></button></div>{addPickerView === "menu" ? <div className="mt-2 divide-y divide-border/70">{[["Text", <Type key="text" />, chooseAddText], ["Images", <ImagePlus key="images" />, chooseAddImage], ["Icons", <Star key="icons" />, () => setAddPickerView("icons")], ["Date", <CalendarDays key="date" />, chooseAddDate], ["Bezier", <Pencil key="bezier" />, chooseAddBezier]].map(([label, icon, on]) => <button key={label as string} className="flex w-full items-center gap-4 rounded-lg px-3 py-4 text-left transition-colors hover:bg-muted" onClick={on as () => void}><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary [&_svg]:h-5 [&_svg]:w-5">{icon as ReactNode}</span><span className="text-base font-medium">{label as string}</span><ArrowRight className="ml-auto h-4 w-4 text-muted-foreground" /></button>)}</div> : <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">{Object.entries(ICONS).map(([name, path]) => <button key={name} className="flex aspect-square flex-col items-center justify-center gap-1 rounded-xl border border-border transition-colors hover:border-primary hover:bg-primary/10" title={`Add ${name}`} onClick={() => chooseAddIcon(name)}><svg viewBox="0 0 24 24" className="h-8 w-8 fill-current text-primary" aria-hidden="true"><path d={path} /></svg><span className="text-[10px] text-muted-foreground">{name}</span></button>)}</div>}</section></>}
 
       {aiOpen && <section className="fixed inset-x-2 bottom-20 z-50 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur md:bottom-auto md:left-auto md:right-4 md:top-16 md:w-96"><div className="flex items-center gap-2 border-b border-border p-3"><Sparkles className="h-4 w-4 text-primary" /><h2 className="font-semibold">Design assistant</h2><button className="ml-auto rounded p-1 hover:bg-muted" onClick={() => setAiOpen(false)} aria-label="Close assistant"><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{aiMessages.length === 0 && <p className="text-xs text-muted-foreground">Ask me to add, edit, move, arrange, or style objects on your canvas.</p>}{aiMessages.map((message, i) => <div key={i} className={`rounded-lg p-2 text-sm ${message.role === "user" ? "ml-5 bg-primary/15" : "mr-5 bg-muted"}`}>{message.text}</div>)}{aiBusy && <p className="text-xs text-muted-foreground">Working on your design…</p>}</div><form className="flex gap-2 border-t border-border p-3" onSubmit={(e) => { e.preventDefault(); void runAssistant(); }}><input className="field min-w-0 flex-1" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Try: add a blue circle" disabled={aiBusy} /><button className="rounded-lg bg-primary p-2 text-primary-foreground disabled:opacity-50" disabled={aiBusy || !aiPrompt.trim()} aria-label="Send command"><Send className="h-4 w-4" /></button></form></section>}
       {infoPanel && <><div className="fixed inset-0 z-50 bg-black/35 backdrop-blur-md" aria-hidden="true" onClick={() => setInfoPanel(null)} /><section role="dialog" aria-modal="true" className="fixed inset-x-4 top-1/2 z-[60] max-h-[80vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card/95 p-5 shadow-2xl backdrop-blur-xl sm:left-1/2 sm:w-[min(92vw,30rem)] sm:-translate-x-1/2"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">SFCH Limited</p><h2 className="mt-1 text-xl font-semibold">{infoPanel === "about" ? "About us" : "Contact us"}</h2></div><button className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close information" onClick={() => setInfoPanel(null)}><X className="h-5 w-5" /></button></div>{infoPanel === "about" ? <p className="mt-5 text-sm leading-7 text-muted-foreground">SFCH Limited is a creative company passionate about designing and creating websites.</p> : <div className="mt-5 space-y-3 text-sm"><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="mailto:sfchlimited@gmail.com">sfchlimited@gmail.com</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="mailto:sfchlmtdhq@gmail.com">sfchlmtdhq@gmail.com</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="tel:07077579322">07077579322</a><a className="block rounded-lg bg-muted/60 p-3 hover:bg-muted" href="https://instagram.com/sfch.limited" target="_blank" rel="noreferrer">@sfch.limited</a></div>}</section></>}
