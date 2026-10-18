@@ -658,6 +658,7 @@ export function Editor({ id }: { id: string }) {
   const shareTo = (target: string) => { const url = encodeURIComponent(window.location.href); const text = encodeURIComponent(proj.current?.name ?? "My Gridora design"); const links: Record<string, string> = { Facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`, Twitter: `https://twitter.com/intent/tweet?text=${text}&url=${url}`, Google: `https://www.google.com/search?q=${text}`, Whatsapp: `https://wa.me/?text=${text}%20${url}`, Instagram: "https://www.instagram.com/" }; if (target === "Save to gallery") { void exportAs("png"); return; } window.open(links[target], "_blank", "noopener,noreferrer"); };
   const topOptions = [
     ["Use image from gallery", () => fileRef.current?.click()], ["Fullscreen", () => document.documentElement.requestFullscreen?.()],
+    ["AI Design Assistant", () => { setAiOpen((value) => !value); setPanelOpen(false); }],
     ["Use image from camera", () => { fileRef.current?.setAttribute("capture", "environment"); fileRef.current?.click(); }], ["Image size", () => openBottom("background")],
     ["Contact us", () => setInfoPanel("contact")], ["Tutorials", () => { window.open("#tutorials", "_self"); }], ["About", () => setInfoPanel("about")], ["Exit", () => setSaveHomeOpen(true)],
   ] as const;
@@ -711,7 +712,7 @@ export function Editor({ id }: { id: string }) {
           <NavIconBtn label="Save" active={exportOpen} onClick={() => setExportOpen((v) => !v)}><Save /></NavIconBtn>
           <NavIconBtn label="Redo" disabled={h.i >= h.stack.length - 1 || aiBusy || h.lock} onClick={redo}><Redo2 /></NavIconBtn>
           <NavIconBtn label="Share" active={shareOpen} onClick={() => setShareOpen((v) => !v)}><Share2 /></NavIconBtn>
-          <NavIconBtn label="AI Design Assistant" active={aiOpen} disabled={!ready} onClick={() => {setAiOpen(v=>!v);setPanelOpen(false);}}><Sparkles /></NavIconBtn>
+          <NavIconBtn label="Zoom to 100%" disabled={!ready} onClick={() => applyZoom(1)}><ZoomIn /></NavIconBtn>
           <NavIconBtn label="Grid guides" active={snapAlign} onClick={() => setSnapAlign((v) => !v)}><Grid2X2 /></NavIconBtn>
           <NavIconBtn label="Options" active={optionsOpen} onClick={() => setOptionsOpen((v) => !v)}><Settings2 /></NavIconBtn>
           <NavIconBtn label="Layers" active={layerOpen} onClick={() => { setLayerOpen(true); setLayerSelection([]); setSelectedTool(null); setPanelOpen(true); }}><Layers /></NavIconBtn>
