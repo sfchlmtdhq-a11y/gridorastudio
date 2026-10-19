@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { SIZE_PRESETS, createProject } from "@/lib/projects";
+import { ColorPickerField } from "./ColorPickerField";
 
 export function NewDesignDialog({
   open,
@@ -40,7 +41,7 @@ export function NewDesignDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-background/80 backdrop-blur-sm sm:items-center" onClick={onClose}>
       <div
-        className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-t-2xl border border-border bg-card p-6 sm:rounded-2xl"
+        className="max-h-[calc(100dvh-1rem)] min-h-0 w-full min-w-0 max-w-xl overflow-y-auto overscroll-contain rounded-t-2xl border border-border bg-card p-4 sm:rounded-2xl sm:p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between">
@@ -79,8 +80,8 @@ export function NewDesignDialog({
           </div>
         </div>
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Background</p>
-        <div className="mt-2 mb-6 flex flex-wrap items-center gap-3">
-          <input type="color" value={bg} disabled={transparent} onChange={(e) => setBg(e.target.value)} className="h-10 w-14 cursor-pointer rounded border border-border bg-transparent disabled:opacity-40" />
+        <div className="mt-2 mb-6 flex min-w-0 flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1"><ColorPickerField label="Canvas background" value={bg} disabled={transparent} onChange={setBg} /></div>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={transparent} onChange={(e) => setTransparent(e.target.checked)} />
             Transparent background
