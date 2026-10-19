@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type MouseEvent } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type MouseEvent, type PointerEvent, type CSSProperties } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -85,6 +85,8 @@ export function Editor({ id }: { id: string }) {
   const [drawingActive, setDrawingActive] = useState(false);
   const [addPickerView, setAddPickerView] = useState<"menu" | "icons">("menu");
   const [drawSmoothness, setDrawSmoothness] = useState(70);
+  const [panelExpanded, setPanelExpanded] = useState(false);
+  const panelDragStart = useRef<number | null>(null);
   const askAssistant = useServerFn(askGeminiDesignAssistant);
 
   const W = () => proj.current?.width ?? 1;
@@ -209,7 +211,7 @@ export function Editor({ id }: { id: string }) {
       c.on("object:removed", onChange);
       c.on("text:changed", onChange);
       c.on("path:created", ({ path }: { path?: Obj }) => { if (!path) return; path.set({ name: "Freehand drawing", drawSmoothness }); c.setActiveObject(path); setDrawingMode(false); setBottomMode("elements"); setSelectedTool("Draw"); setPanelOpen(true); force(); });
-      const onSel = () => { const selected = c.getActiveObject(); if (selected?.type === "image") setTab((current) => current === "fill" ? "position" : current); force(); };
+      const onSel = () => { const selected = c.getActiveObject(); if (selected?.type === "image") setTab((current) => current === "fill" ? "position" : current); setPanelExpanded(false); requestAnimationFrame(() => fit()); force(); };
       c.on("selection:created", onSel);
       c.on("selection:updated", onSel);
       c.on("selection:cleared", () => force());
@@ -237,9 +239,11 @@ export function Editor({ id }: { id: string }) {
         if (tapRef.current.target === target) tapRef.current.count += 1;
         else tapRef.current = { target, count: 1 };
         if (tapRef.current.count < 3) closeVirtualKeyboard();
+        setPanelExpanded(false);
         setPanelOpen(true);
         setBottomMode(["textbox", "i-text", "text"].includes(target.type) ? "text" : "elements");
         setSelectedTool(target.type === "path" ? "Draw" : null);
+        requestAnimationFrame(() => fit());
         force();
       });
       c.on("mouse:dblclick", ({ target }: { target?: Obj }) => {
@@ -617,7 +621,9 @@ export function Editor({ id }: { id: string }) {
   const requestHome = (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); setSaveHomeOpen(true); };
   const saveProjectAndHome = async () => { await persist(); setSaveHomeOpen(false); nav({ to: "/" }); };
   const exportAndHome = async (kind: "png" | "jpg" | "pdf") => { await exportAs(kind); setSaveHomeOpen(false); nav({ to: "/" }); };
-  const openBottom = (mode: "text" | "elements" | "background" | "filters") => { if (drawingActive) setDrawingMode(false); setLayerOpen(false); setLayerSelection([]); setBottomMode(mode); setSelectedTool(null); setPanelOpen(true); if (mode === "background") setTab("bg"); if (mode === "filters") setTab("edit"); if (mode === "elements") setTab("shapes"); };
+  const openBottom = (mode: "text" | "elements" | "background" | "filters") => { if (drawingActive) setDrawingMode(false); setLayerOpen(false); setLayerSelection([]); setBottomMode(mode); setSelectedTool(null); setPanelExpanded(false); setPanelOpen(true); if (mode === "background") setTab("bg"); if (mode === "filters") setTab("edit"); if (mode === "elements") setTab("shapes"); };
+  const beginPanelDrag = (event: PointerEvent<HTMLDivElement>) => { panelDragStart.current = event.clientY; event.currentTarget.setPointerCapture(event.pointerId); };
+  const endPanelDrag = (event: PointerEvent<HTMLDivElement>) => { const start = panelDragStart.current; panelDragStart.current = null; if (start === null) return; const delta = event.clientY - start; if (Math.abs(delta) > 12) setPanelExpanded(delta < 0); else setPanelExpanded((value) => !value); };
   const shareDesign = async () => { if (navigator.share) { await navigator.share({ title: proj.current?.name ?? "Gridora design", text: "A design made in Gridora Studio" }).catch(() => undefined); } else setExportOpen(true); };
   const shareTo = (target: string) => { const url = encodeURIComponent(window.location.href); const text = encodeURIComponent(proj.current?.name ?? "My Gridora design"); const links: Record<string, string> = { Facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`, Twitter: `https://twitter.com/intent/tweet?text=${text}&url=${url}`, Google: `https://www.google.com/search?q=${text}`, Whatsapp: `https://wa.me/?text=${text}%20${url}`, Instagram: "https://www.instagram.com/" }; if (target === "Save to gallery") { void exportAs("png"); return; } window.open(links[target], "_blank", "noopener,noreferrer"); };
   const topOptions = [
@@ -638,6 +644,7 @@ export function Editor({ id }: { id: string }) {
   const runTool = (tool: string) => {
     if (tool !== "Draw" && drawingActive) setDrawingMode(false);
     setSelectedTool(tool);
+    setPanelExpanded(true);
     if (tool === "Add text") { addText(); setSelectedTool(null); }
     else if (tool === "Delete") del();
     else if (tool === "Copy") void dup();
@@ -663,14 +670,14 @@ export function Editor({ id }: { id: string }) {
   };
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden">
+    <div className="flex h-[100dvh] flex-col overflow-hidden" style={{ "--editor-panel-height": panelOpen ? (panelExpanded ? "min(34dvh, 18rem)" : "min(20dvh, 10rem)") : "0px" } as CSSProperties}>
       <header className="relative z-40 shrink-0 border-b border-border bg-card px-2 sm:px-4">
         <div className="flex h-12 items-center gap-2">
           <Logo compact onClick={requestHome} />
           <input className="min-w-0 max-w-[35vw] rounded-md bg-transparent px-2 py-1 text-sm font-medium outline-none hover:bg-muted focus:bg-muted sm:max-w-xs" defaultValue={proj.current?.name} key={ready ? "r" : "n"} onBlur={(e) => { if (proj.current) { proj.current.name = e.target.value || "Untitled design"; persist(); } }} />
           <span className="hidden text-xs text-muted-foreground md:inline">{saved ? "Saved" : "Saving…"}</span>
         </div>
-        <nav aria-label="Editor actions" className="grid h-[5.5rem] grid-cols-4 grid-rows-2 gap-1 border-t border-border/70 bg-muted/20 px-1.5 py-1">
+        <nav aria-label="Editor actions" className="grid h-16 grid-cols-4 grid-rows-2 gap-0.5 border-t border-border/70 bg-muted/20 px-1 py-0.5 sm:h-[5.5rem] sm:gap-1 sm:px-1.5 sm:py-1">
           <NavIconBtn label="Add" active={adding} onClick={() => { setAdding(true); setAddPickerView("menu"); setPanelOpen(false); }}><Plus /></NavIconBtn>
           <NavIconBtn label="Save" active={exportOpen} onClick={() => setExportOpen((v) => !v)}><Save /></NavIconBtn>
           <NavIconBtn label="Redo" disabled={h.i >= h.stack.length - 1} onClick={redo}><Redo2 /></NavIconBtn>
@@ -699,7 +706,8 @@ export function Editor({ id }: { id: string }) {
             onPointerMove={(e) => { const d = drag.current; if (d && wrapRef.current) { wrapRef.current.scrollLeft = d.sl - (e.clientX - d.x); wrapRef.current.scrollTop = d.st - (e.clientY - d.y); } }}
             onPointerUp={() => (drag.current = null)}
             onPointerLeave={() => (drag.current = null)}
-            className={`workspace absolute inset-x-0 top-0 ${panelOpen ? "bottom-[calc(clamp(12rem,30vh,22rem)+4rem)]" : "bottom-16"} overflow-hidden ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            className={`workspace absolute inset-x-0 top-0 bottom-16 overflow-hidden ${hand ? "cursor-grab active:cursor-grabbing" : ""}`}
+            style={{ bottom: panelOpen ? "calc(var(--editor-panel-height) + 4rem)" : "4rem" }}
           >
             <div className="flex min-h-full min-w-full items-center justify-center p-6" style={{ width: "max-content" }}>
               <div className={`checker shadow-2xl ${hand ? "pointer-events-none" : ""}`}>
@@ -732,11 +740,12 @@ export function Editor({ id }: { id: string }) {
 
         {layerOpen && <div className="fixed inset-0 z-30 bg-black/25 backdrop-blur-md" aria-hidden="true" />}
         {/* side panel */}
-        <aside className={`${panelOpen ? "grid" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[clamp(12rem,30vh,22rem)] max-h-[calc(100dvh-4rem)] grid-rows-[auto_minmax(0,1fr)] rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}>
-          <div className="flex min-h-0 items-center border-b border-border">
-            {layerOpen ? <div className="flex w-full items-center justify-between px-4 py-3"><div><h2 className="text-sm font-semibold">Layers</h2><p className="text-[11px] text-muted-foreground">Select two elements to merge them.</p></div><button className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Cancel layers" title="Cancel" onClick={() => { setLayerOpen(false); setLayerSelection([]); setPanelOpen(false); }}><X className="h-5 w-5" /></button></div> : <><div className="flex min-w-0 flex-1 touch-pan-x gap-1 overflow-x-auto overscroll-x-contain p-2 pb-2">
+        <aside className={`${panelOpen ? "grid" : "hidden"} fixed inset-x-0 bottom-16 z-40 max-h-[35dvh] grid-rows-[auto_minmax(0,1fr)] rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`} style={{ height: panelExpanded ? "min(34dvh, 18rem)" : "min(20dvh, 10rem)" }}>
+          <div className="flex min-h-0 flex-col border-b border-border">
+            <div className="flex h-3 shrink-0 cursor-grab touch-none items-center justify-center" onPointerDown={beginPanelDrag} onPointerUp={endPanelDrag} aria-label="Drag to resize tools"><span className="h-1 w-10 rounded-full bg-muted-foreground/40" /></div>
+            {layerOpen ? <div className="flex w-full items-center justify-between px-3 pb-2 sm:px-4 sm:pb-3"><div><h2 className="text-sm font-semibold">Layers</h2><p className="text-[11px] text-muted-foreground">Select two elements to merge them.</p></div><button className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Cancel layers" title="Cancel" onClick={() => { setLayerOpen(false); setLayerSelection([]); setPanelOpen(false); }}><X className="h-5 w-5" /></button></div> : <div className="flex min-h-0 items-center">{selectedTool ? <><button className="ml-2 rounded-lg p-1.5 text-muted-foreground hover:bg-muted" aria-label="Back to tools" title="Back to tools" onClick={() => setSelectedTool(null)}><ArrowLeft className="h-4 w-4" /></button><span className="min-w-0 flex-1 truncate px-2 text-xs font-medium text-foreground">{selectedTool}</span></> : <div className="flex min-w-0 flex-1 touch-pan-x gap-1 overflow-x-auto overscroll-x-contain p-2 pb-2">
               {toolRows[bottomMode].map((tool) => <button key={tool} title={tool} aria-label={tool} onClick={() => runTool(tool)} className={`flex w-16 shrink-0 snap-start flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 py-1 text-[9px] sm:w-20 sm:gap-1 sm:px-1 sm:py-1.5 sm:text-[10px] ${selectedTool === tool ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted"}`}><span className="[&_svg]:h-4 [&_svg]:w-4 sm:[&_svg]:h-5 sm:[&_svg]:w-5">{toolIcon(tool)}</span><span className="truncate">{tool}</span></button>)}
-            </div><button className="mr-2 rounded p-1" aria-label="Close tools" onClick={() => { setPanelOpen(false); setSelectedTool(null); }}><X className="h-4 w-4" /></button></>}
+            </div>}<button className="mr-2 rounded p-1" aria-label="Close tools" onClick={() => { setPanelOpen(false); setSelectedTool(null); }}><X className="h-4 w-4" /></button></div>}
           </div>
           <div className="min-h-0 overflow-y-auto p-2 sm:p-4">
             {layerOpen ? <div className="space-y-2"><div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">{objects.length} element{objects.length === 1 ? "" : "s"}</span><Button size="sm" variant="outline" disabled={layerSelection.length < 2} onClick={mergeLayerObjects}>Merge selected</Button></div>{objects.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">No layers yet.</p>}{objects.map((x, i) => <div key={i} className={`flex items-center gap-2 rounded-xl border p-2 ${layerSelection.includes(x) ? "border-primary bg-primary/10" : "border-border bg-background/40"}`}><input type="checkbox" aria-label={`Select ${x.name || x.type} for merge`} checked={layerSelection.includes(x)} onChange={() => setLayerSelection((items) => items.includes(x) ? items.filter((item) => item !== x) : [...items, x])} /><button className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => { if (x.visible && !x.lockedLayer) { fc.current.setActiveObject(x); fc.current.requestRenderAll(); force(); } }}>{x.name || x.type}{x.text ? `: ${x.text.slice(0, 18)}` : ""}</button><IconBtn label={x.visible ? "Hide" : "Unhide"} onClick={() => { x.visible = !x.visible; fc.current.requestRenderAll(); commit(); }}>{x.visible ? <Eye /> : <EyeOff />}</IconBtn><IconBtn label={x.lockedLayer ? "Unlock" : "Lock"} onClick={() => { x.lockedLayer = !x.lockedLayer; commit(); }}>{x.lockedLayer ? <Lock /> : <Unlock />}</IconBtn><IconBtn label="Delete" className="text-destructive" onClick={() => deleteLayerObject(x)}><Trash2 /></IconBtn></div>)}</div> : selectedTool && ready && fab.current && (selectedTool === "Draw" ? <DrawingDetails o={o} onChange={updateDrawing} onContinue={() => setDrawingMode(true)} /> : selectedTool === "Shapes" ? <div className="grid grid-cols-4 gap-1.5 px-1 sm:grid-cols-6 sm:gap-2">{["rect", "rounded", "circle", "ellipse", "triangle", "pentagon", "hexagon", "star", "line", "arrow", "frame", "grid"].map((k) => <Tile key={k} className="h-12 aspect-auto sm:h-14" onClick={() => addShape(k)}><ShapeIcon k={k} /><span className="text-[9px] capitalize sm:text-[10px]">{k}</span></Tile>)}</div> : selectedTool === "Stickers" ? <Grid>{STICKERS.map((s) => <Tile key={s} onClick={() => addSticker(s)}><span className="text-3xl">{s}</span></Tile>)}</Grid> : bottomMode === "background" && ["Color", "Transparent", "Image size", "Image", "From gallery", "From camera"].includes(selectedTool) ? <CanvasPanel c={fc.current} f={fab.current} proj={proj.current!} commit={commit} addImage={() => backgroundFileRef.current?.click()} resize={(w, hh) => { if (!proj.current) return; proj.current = { ...proj.current, width: w, height: hh }; fit(); commit(); }} /> : <EditorToolDetails tool={bottomMode === "filters" ? `filter:${selectedTool === "Noise" ? "grain" : selectedTool === "Rotate" ? "rotation" : selectedTool.toLowerCase()}` : selectedTool} o={o} f={fab.current} c={fc.current} width={W()} height={H()} commit={commit} erase={(mode, color, tolerance) => { void eraseImageBackground(mode, color, tolerance); }} mask={maskImage} />)}
