@@ -107,7 +107,7 @@ export async function saveProject(project: Project): Promise<Project> {
       width: project.width,
       height: project.height,
       background: project.background,
-      canvas_json: project.json ?? null,
+      canvas_json: JSON.parse(JSON.stringify(project.json ?? null)),
       thumbnail_path: thumbnailPath,
     })
     .select("id,name,width,height,background,canvas_json,thumbnail_path,created_at,updated_at")
