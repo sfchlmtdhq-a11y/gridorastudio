@@ -1667,13 +1667,6 @@ export function Editor({ id }: { id: string }) {
     ],
     ["Fullscreen", () => document.documentElement.requestFullscreen?.()],
     [
-      "Use image from camera",
-      () => {
-        fileRef.current?.setAttribute("capture", "environment");
-        fileRef.current?.click();
-      },
-    ],
-    [
       "Image size",
       () => {
         openBottom("background");
@@ -1751,9 +1744,9 @@ export function Editor({ id }: { id: string }) {
           "Shadow",
           "Inner shadow",
         ]
-      : ["Stickers", "Import", "Draw", "Shapes", "Arrow"],
-    background: ["Color", "Transparent", "Image", "From gallery", "From camera"],
-    filters: ["Noise", "Brightness", "Contrast", "Hue", "Saturation"],
+      : ["Stickers", "Import", "Draw", "Shapes"],
+    background: ["Color", "Transparent", "Image", "From gallery"],
+    filters: ["Noise", "Brightness", "Contrast", "Hue"],
   };
   const toolIcon = (label: string) =>
     label === "Delete" ? (
@@ -2413,16 +2406,16 @@ export function Editor({ id }: { id: string }) {
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="grid h-[min(13rem,30dvh)] w-full shrink-0 grid-cols-4 auto-rows-[2.6rem] content-start gap-1 overflow-y-auto overscroll-y-contain p-2 pt-3 sm:auto-rows-[3rem] sm:p-2">
+                <div className="grid h-[min(11rem,28dvh)] w-full shrink-0 grid-cols-4 auto-rows-[2.25rem] content-start gap-0.5 overflow-y-auto overscroll-y-contain p-1.5 pt-3 sm:auto-rows-[2.6rem] sm:gap-1 sm:p-2">
                   {toolRows[bottomMode].map((tool) => (
                     <button
                       key={tool}
                       title={tool}
                       aria-label={tool}
                       onClick={() => runTool(tool)}
-                      className="flex h-full min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg border border-border/60 px-1 text-[10px] leading-tight text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-foreground"
+                      className="flex h-full min-w-0 flex-col items-center justify-center gap-0 rounded-md border border-border/60 px-0.5 text-[9px] leading-tight text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-foreground sm:gap-0.5 sm:rounded-lg sm:px-1 sm:text-[10px]"
                     >
-                      <span className="[&_svg]:h-6 [&_svg]:w-6">{toolIcon(tool)}</span>
+                      <span className="[&_svg]:h-5 [&_svg]:w-5 sm:[&_svg]:h-6 sm:[&_svg]:w-6">{toolIcon(tool)}</span>
                       <span className="line-clamp-2 break-words text-center">{tool}</span>
                     </button>
                   ))}
@@ -2517,7 +2510,7 @@ export function Editor({ id }: { id: string }) {
                   onContinue={() => setDrawingMode(true)}
                 />
               ) : selectedTool === "Shapes" ? (
-                <div className="grid min-w-0 grid-cols-4 gap-1.5 px-1 sm:grid-cols-6 sm:gap-2">
+                <div className="grid min-w-0 grid-cols-4 gap-1 px-1 sm:grid-cols-6 sm:gap-1.5">
                   {[
                     "rect",
                     "rounded",
@@ -2528,13 +2521,12 @@ export function Editor({ id }: { id: string }) {
                     "hexagon",
                     "star",
                     "line",
-                    "arrow",
                     "frame",
                     "grid",
                   ].map((k) => (
                     <Tile
                       key={k}
-                      className="h-12 aspect-auto min-w-0 sm:h-14"
+                      className="h-10 aspect-auto min-w-0 sm:h-12"
                       onClick={() => addShape(k)}
                     >
                       <ShapeIcon k={k} />
@@ -2559,7 +2551,6 @@ export function Editor({ id }: { id: string }) {
                   "Image size",
                   "Image",
                   "From gallery",
-                  "From camera",
                 ].includes(selectedTool) ? (
                 <CanvasPanel
                   c={fc.current}
@@ -4443,13 +4434,6 @@ function DesignEdit({ c, commit }: { c: Obj; commit: () => void }) {
   return (
     <Section title="Whole design">
       <Slider
-        label="Saturation"
-        value={a.saturation}
-        min={-100}
-        max={100}
-        onChange={(v) => set("saturation", v)}
-      />
-      <Slider
         label="Contrast"
         value={a.contrast}
         min={-100}
@@ -4551,13 +4535,6 @@ function ImageAdjustments({ o, f, commit }: { o: Obj; f: Fab; commit: () => void
         min={-100}
         max={100}
         onChange={(v) => update("contrast", v)}
-      />
-      <Slider
-        label="Saturation"
-        value={values["saturation"] ?? 0}
-        min={-100}
-        max={100}
-        onChange={(v) => update("saturation", v)}
       />
       <Slider
         label="Blur"
