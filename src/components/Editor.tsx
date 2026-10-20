@@ -1871,13 +1871,15 @@ export function Editor({ id }: { id: string }) {
   return (
     <div
       className="flex h-[100dvh] flex-col overflow-hidden"
-      style={{
-        "--editor-panel-height": panelOpen
-          ? panelUsesExpandedHeight
-            ? "min(34dvh, 18rem)"
-            : "min(20dvh, 10rem)"
-          : "0px",
-      } as CSSProperties}
+      style={
+        {
+          "--editor-panel-height": panelOpen
+            ? panelUsesExpandedHeight
+              ? "calc(min(34dvh, 18rem) + 0.875rem)"
+              : "calc(min(20dvh, 10rem) + 0.875rem)"
+            : "0px",
+        } as CSSProperties
+      }
     >
       <header className="relative z-40 shrink-0 border-b border-border bg-card px-2 sm:px-4">
         <div className="flex h-12 items-center gap-2">
@@ -1899,7 +1901,7 @@ export function Editor({ id }: { id: string }) {
         </div>
         <nav
           aria-label="Editor actions"
-          className="grid h-16 grid-cols-4 grid-rows-2 gap-0.5 border-t border-border/70 bg-muted/20 px-1 py-0.5 sm:h-[5.5rem] sm:gap-1 sm:px-1.5 sm:py-1"
+          className="grid h-[5.75rem] grid-cols-4 grid-rows-2 gap-0.5 border-t border-border/70 bg-muted/20 px-1 py-2 sm:h-[5.5rem] sm:gap-1 sm:px-1.5 sm:py-1"
         >
           <NavIconBtn
             label="Add"
@@ -2327,7 +2329,7 @@ export function Editor({ id }: { id: string }) {
         )}
         {/* side panel */}
         <aside
-          className={`${panelOpen ? "grid" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[var(--editor-panel-height)] max-h-[35dvh] min-h-0 overflow-hidden grid-rows-[auto_minmax(0,1fr)] rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}
+          className={`${panelOpen ? "grid" : "hidden"} fixed inset-x-0 bottom-16 z-40 h-[var(--editor-panel-height)] max-h-[calc(35dvh+0.875rem)] min-h-0 overflow-hidden grid-rows-[auto_minmax(0,1fr)] rounded-t-xl border-t border-border bg-card/95 shadow-2xl backdrop-blur`}
         >
           <div
             className="pointer-events-auto absolute inset-x-0 top-0 z-10 flex h-3 cursor-grab touch-none items-center justify-center"
@@ -2406,7 +2408,7 @@ export function Editor({ id }: { id: string }) {
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="grid h-[min(11rem,28dvh)] w-full shrink-0 grid-cols-4 auto-rows-[2.25rem] content-start gap-0.5 overflow-y-auto overscroll-y-contain p-1.5 pt-3 sm:auto-rows-[2.6rem] sm:gap-1 sm:p-2">
+                <div className="-mt-2 grid h-[3.75rem] w-full shrink-0 grid-flow-col grid-cols-4 grid-rows-1 auto-cols-[calc((100%_-_1.5rem)/4)] content-start gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain px-2 pt-3 pb-1 sm:mt-0">
                   {toolRows[bottomMode].map((tool) => (
                     <button
                       key={tool}
@@ -2415,8 +2417,12 @@ export function Editor({ id }: { id: string }) {
                       onClick={() => runTool(tool)}
                       className="flex h-full min-w-0 flex-col items-center justify-center gap-0 rounded-md border border-border/60 px-0.5 text-[9px] leading-tight text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-foreground sm:gap-0.5 sm:rounded-lg sm:px-1 sm:text-[10px]"
                     >
-                      <span className="[&_svg]:h-5 [&_svg]:w-5 sm:[&_svg]:h-6 sm:[&_svg]:w-6">{toolIcon(tool)}</span>
-                      <span className="line-clamp-2 break-words text-center">{tool}</span>
+                      <span className="[&_svg]:h-5 [&_svg]:w-5 sm:[&_svg]:h-6 sm:[&_svg]:w-6">
+                        {toolIcon(tool)}
+                      </span>
+                      <span className="block w-full max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-center">
+                        {tool}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -2545,13 +2551,9 @@ export function Editor({ id }: { id: string }) {
                   ))}
                 </Grid>
               ) : bottomMode === "background" &&
-                [
-                  "Color",
-                  "Transparent",
-                  "Image size",
-                  "Image",
-                  "From gallery",
-                ].includes(selectedTool) ? (
+                ["Color", "Transparent", "Image size", "Image", "From gallery"].includes(
+                  selectedTool,
+                ) ? (
                 <CanvasPanel
                   c={fc.current}
                   f={fab.current}
@@ -2591,7 +2593,7 @@ export function Editor({ id }: { id: string }) {
 
         <nav
           aria-label="Primary design tools"
-          className="fixed inset-x-0 bottom-0 z-50 grid h-16 grid-cols-4 gap-1 border-t border-border/80 bg-card/95 px-2 py-1.5 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur-xl"
+          className="fixed inset-x-0 bottom-0 z-50 grid h-16 grid-cols-4 gap-2 border-t border-border/80 bg-card/95 px-2 py-1.5 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur-xl"
         >
           {bottomTools.map((tool) => (
             <button
